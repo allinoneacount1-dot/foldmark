@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
-import Image from "next/image";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
 import { ConnectButton } from "@/components/ConnectButton";
 import { MotionProvider } from "@/components/MotionProvider";
+import { MobileNav } from "@/components/MobileNav";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -26,11 +26,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="mx-auto max-w-[1600px] flex h-[52px] items-center justify-between px-4 md:px-6">
               <div className="flex items-center gap-8">
                 <a href="/" className="flex items-center gap-3">
-                  <Image src="/foldmark-mark.png" alt="Foldmark" width={28} height={28} className="h-7 w-7 object-contain" priority />
+                  <img src="/foldmark-mark.svg" alt="Foldmark" width={28} height={28} className="h-7 w-7 object-contain [filter:drop-shadow(0_0_8px_rgba(199,255,74,0.12))]" />
                   <span className="font-mono text-[11px] tracking-[0.28em]">FOLDMARK</span>
                   <span className="hidden md:inline font-mono text-[10px] tracking-[0.14em] text-white/40">/ ROBINHOOD CHAIN</span>
                 </a>
-                <nav className="hidden lg:flex items-center gap-1 text-[11px] tracking-[0.14em] font-mono">
+                <nav className="hidden md:flex items-center gap-1 text-[11px] tracking-[0.14em] font-mono">
                   {[
                     ["OVERVIEW", "/"],
                     ["FABRIC", "/fabric"],
@@ -52,6 +52,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <span className="text-white/30">SEARCH</span>
                 </a>
                 <ConnectButton />
+                <MobileNav />
               </div>
             </div>
           </header>
