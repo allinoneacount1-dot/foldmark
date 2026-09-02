@@ -1,8 +1,8 @@
 export const ROBINHOOD_CHAIN = {
   id: 4663,
   name: "Robinhood Chain",
-  rpc: process.env.NEXT_PUBLIC_ROBINHOOD_RPC || "https://rpc.robinhoodchain.io",
-  blockscout: "https://explorer.robinhoodchain.io",
+  rpc: process.env.NEXT_PUBLIC_ROBINHOOD_RPC || "https://rpc.mainnet.chain.robinhood.com",
+  blockscout: "https://robinhoodchain.blockscout.com",
 } as const;
 
 export async function getPulse() {

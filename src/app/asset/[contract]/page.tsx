@@ -31,7 +31,7 @@ export default async function AssetPage({ params }: { params: Promise<{ contract
           <div className="border border-white/10 bg-[#080A08] p-4">
             <div className="font-mono text-[11px] tracking-[0.16em]">CONTRACT</div>
             <div className="mt-2 font-mono text-[12px] break-all text-white/70">{contract}</div>
-            <a href={`https://explorer.robinhoodchain.io/address/${contract}`} target="_blank" className="mt-2 inline-block font-mono text-[11px] tracking-[0.12em] text-[#C7FF4A] hover:underline">VIEW ON BLOCKSCOUT ↗</a>
+            <a href={`https://robinhoodchain.blockscout.com/address/${contract}`} target="_blank" className="mt-2 inline-block font-mono text-[11px] tracking-[0.12em] text-[#C7FF4A] hover:underline">VIEW ON BLOCKSCOUT ↗</a>
           </div>
           <div className="border border-white/10 bg-white/[0.02] p-4 font-mono text-[10px] leading-relaxed text-white/50">
             DATA SOURCES — Price: Chainlink · Metadata: Robinhood Registry · Transfers: RPC · Contract: Registry · Explorer: Blockscout

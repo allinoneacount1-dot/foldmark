@@ -13,7 +13,7 @@ export const robinhoodChain = defineChain({
     },
   },
   blockExplorers: {
-    default: { name: "Blockscout", url: "https://explorer.robinhoodchain.io" },
+    default: { name: "Blockscout", url: "https://robinhoodchain.blockscout.com" },
   },
 });
 
