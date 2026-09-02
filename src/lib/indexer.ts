@@ -7,7 +7,7 @@ const TRANSFER_EVENT = parseAbiItem("event Transfer(address indexed from, addres
 export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) {
   if (!isSupabaseConfigured() || !supabase) return { error: "SUPABASE_NOT_CONFIGURED" as const };
 
-  const client = createPublicClient({ chain: robinhoodChain, transport: http(process.env.NEXT_PUBLIC_ROBINHOOD_RPC || "https://rpc.robinhoodchain.io") });
+  const client = createPublicClient({ chain: robinhoodChain, transport: http(process.env.NEXT_PUBLIC_ROBINHOOD_RPC || "https://rpc.mainnet.chain.robinhood.com") });
 
   // fetch logs for Transfer
   const logs = await client.getLogs({ address: undefined, event: TRANSFER_EVENT, fromBlock, toBlock });
