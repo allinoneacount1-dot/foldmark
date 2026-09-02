@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@theme {
+  --color-loom-black: #080A08;
+  --color-carbon: #10130F;
+  --color-graphite: #181C17;
+  --color-paper: #F2F0E8;
+  --color-ash: #949A91;
+  --color-signal: #C7FF4A;
+  --color-signal-dim: #A3D93A;
+  --color-danger: #E85D4E;
+  --font-display: "Instrument Serif", Georgia, serif;
+  --font-ui: "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "IBM Plex Mono", ui-monospace, monospace;
+}
+
+:root {
+  --background: #080A08;
+  --foreground: #F2F0E8;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #181C17 transparent;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: #080A08;
+}
+
+body {
+  background: #080A08;
+  color: #F2F0E8;
+  font-family: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: #C7FF4A;
+  color: #080A08;
+}
+
+/* tabular numbers for data */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* thin rails */
+.rail {
+  border-color: rgba(242, 240, 232, 0.08);
+}
+
+/* signal scarcity */
+.signal {
+  color: #C7FF4A;
+}
+
+/* focus */
+:focus-visible {
+  outline: 1px solid #C7FF4A;
+  outline-offset: 2px;
+}
+
+/* motion defaults */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
