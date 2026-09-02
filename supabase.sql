@@ -95,23 +95,23 @@ create table if not exists relationships (
   target_id text not null,
   relationship_type text not null,
   weight numeric not null default 0,
-  window text not null,
+  "window" text not null,
   updated_at timestamptz not null default now(),
-  unique(source_type, source_id, target_type, target_id, window)
+  unique(source_type, source_id, target_type, target_id, "window")
 );
 
 create table if not exists flow_windows (
   id uuid primary key default gen_random_uuid(),
   entity_type text not null,
   entity_id text not null,
-  window text not null check (window in ('1H','6H','24H','7D','30D')),
+  "window" text not null check ("window" in ('1H','6H','24H','7D','30D')),
   inflow numeric not null default 0,
   outflow numeric not null default 0,
   net_flow numeric not null default 0,
   transaction_count integer not null default 0,
   unique_counterparties integer not null default 0,
   calculated_at timestamptz not null default now(),
-  unique(entity_type, entity_id, window)
+  unique(entity_type, entity_id, "window")
 );
 
 create table if not exists data_sources (

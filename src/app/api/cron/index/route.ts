@@ -19,16 +19,16 @@ export async function GET(req: Request) {
   }
 
   try {
-    const client = createPublicClient({ chain: robinhoodChain, transport: http(process.env.NEXT_PUBLIC_ROBINHOOD_RPC || "https://rpc.robinhoodchain.io") });
+    const client = createPublicClient({ chain: robinhoodChain, transport: http(process.env.NEXT_PUBLIC_ROBINHOOD_RPC || "https://rpc.mainnet.chain.robinhood.com") });
     const latest = await client.getBlockNumber();
     const cursor = await getCursor();
     const from = BigInt((cursor as any).last_processed_block || 0);
-    const hundred = BigInt(100);
+    const twenty = BigInt(20);
     const one = BigInt(1);
-    const ninetyNine = BigInt(99);
+    const nineteen = BigInt(19);
     const zero = BigInt(0);
-    const start = from === zero ? (latest > hundred ? latest - hundred : zero) : from + one;
-    const end = latest > start + ninetyNine ? start + ninetyNine : latest;
+    const start = from === zero ? (latest > twenty ? latest - twenty : zero) : from + one;
+    const end = latest > start + nineteen ? start + nineteen : latest;
     if (start > end) return NextResponse.json({ status: "UP_TO_DATE", latest: Number(latest), cursor });
 
     const result = await runIndexer({ fromBlock: start, toBlock: end });
