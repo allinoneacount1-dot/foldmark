@@ -4,6 +4,7 @@ import Image from "next/image";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
 import { ConnectButton } from "@/components/ConnectButton";
+import { MotionProvider } from "@/components/MotionProvider";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${geist.variable} ${geistMono.variable} ${instrument.variable} h-full`}>
       <body className="min-h-full flex flex-col bg-[#080A08] text-[#F2F0E8] antialiased">
         <Providers>
+          <MotionProvider>
           <header className="sticky top-0 z-50 border-b border-white/[0.07] bg-[#080A08]/80 backdrop-blur-xl">
             <div className="mx-auto max-w-[1600px] flex h-[52px] items-center justify-between px-4 md:px-6">
               <div className="flex items-center gap-8">
@@ -69,6 +71,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </div>
           </footer>
+          </MotionProvider>
         </Providers>
       </body>
     </html>

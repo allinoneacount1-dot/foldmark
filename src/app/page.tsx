@@ -25,7 +25,7 @@ export default function Home() {
   return (
     <main className="flex-1">
       {/* HERO */}
-      <section className="relative overflow-hidden border-b border-white/[0.07]">
+      <section data-hero className="relative overflow-hidden border-b border-white/[0.07]">
         <div className="absolute inset-0">
           <div className="absolute inset-0 bg-[#080A08]" />
           <div className="absolute inset-0 opacity-[0.14]" style={{ backgroundImage: "radial-gradient(ellipse at 30% 10%, rgba(199,255,74,0.18), transparent 55%), radial-gradient(ellipse at 80% 85%, rgba(255,255,255,0.06), transparent 60%)" }} />
@@ -58,12 +58,12 @@ export default function Home() {
               <span className="font-mono text-[10px] tracking-[0.18em] text-white/70">FOLDMARK / LIVE FINANCIAL NETWORK</span>
               <span className="font-mono text-[10px] tracking-[0.12em] text-white/30">ROBINHOOD CHAIN • 4663</span>
             </div>
-            <h1 className="mt-6 font-serif text-[42px] md:text-[68px] leading-[0.85] tracking-[-0.04em]">
+            <h1 data-headline className="mt-6 font-serif text-[42px] md:text-[68px] leading-[0.85] tracking-[-0.04em]">
               THE MARKET<br />
               IS BECOMING<br />
               <span className="text-[#C7FF4A]">PROGRAMMABLE.</span>
             </h1>
-            <p className="mt-6 max-w-[560px] text-[15px] leading-relaxed text-white/60">
+            <p data-body className="mt-6 max-w-[560px] text-[15px] leading-relaxed text-white/60">
               Explore the assets, capital flows and financial infrastructure emerging across Robinhood Chain. Every thread is a transaction. Every node is a market.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
@@ -92,12 +92,12 @@ export default function Home() {
       </section>
 
       {/* NETWORK PULSE */}
-      <section className="mx-auto max-w-[1600px] px-4 md:px-6 py-10 md:py-14">
+      <section data-reveal className="mx-auto max-w-[1600px] px-4 md:px-6 py-10 md:py-14">
         <div className="grid md:grid-cols-[1.1fr_0.9fr] gap-8">
           <div>
             <div className="font-mono text-[10px] tracking-[0.2em] text-white/40">01 — NETWORK PULSE</div>
             <h2 className="mt-2 font-serif text-[28px] md:text-[36px] leading-none tracking-[-0.03em]">ROBINHOOD CHAIN<br />IS LIVE. DATA IS SCARCE.</h2>
-            <p className="mt-4 text-[13px] leading-relaxed text-white/55 max-w-[520px]">Every value originates from chain data. If the indexer cannot retrieve it, we show DATA UNAVAILABLE — never a fake number.</p>
+            <p data-body className="mt-4 text-[13px] leading-relaxed text-white/55 max-w-[520px]">Every value originates from chain data. If the indexer cannot retrieve it, we show DATA UNAVAILABLE — never a fake number.</p>
           </div>
           <div className="border border-white/[0.08] bg-[#10130F]">
             <div className="px-5 py-3 border-b border-white/[0.07] flex items-center justify-between">
@@ -130,9 +130,9 @@ export default function Home() {
       </section>
 
       {/* CAPITAL IS MOVING */}
-      <section className="border-y border-white/[0.07] bg-[#10130F]">
+      <section data-reveal className="border-y border-white/[0.07] bg-[#10130F]">
         <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-10 md:py-14">
-          <h2 className="font-serif text-[32px] md:text-[48px] leading-[0.9] tracking-[-0.04em]">
+          <h2 data-headline className="font-serif text-[32px] md:text-[48px] leading-[0.9] tracking-[-0.04em]">
             CAPITAL<br />
             DOESN&apos;T STAND STILL.
           </h2>
@@ -189,7 +189,7 @@ export default function Home() {
       </section>
 
       {/* ACTIVE ASSETS */}
-      <section className="mx-auto max-w-[1600px] px-4 md:px-6 py-10 md:py-14">
+      <section data-reveal className="mx-auto max-w-[1600px] px-4 md:px-6 py-10 md:py-14">
         <div className="flex items-baseline justify-between gap-4">
           <h2 className="font-mono text-[11px] tracking-[0.2em]">ACTIVE ASSETS / 24H — INDEXING</h2>
           <Link href="/assets" className="font-mono text-[11px] tracking-[0.14em] text-white/50 hover:text-white">
@@ -224,7 +224,7 @@ export default function Home() {
       </section>
 
       {/* FABRIC */}
-      <section className="border-y border-white/[0.07] bg-[#10130F]">
+      <section data-reveal className="border-y border-white/[0.07] bg-[#10130F]">
         <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-10 md:py-14">
           <div className="grid lg:grid-cols-[1.1fr_0.9fr] gap-8 items-center">
             <div className="border border-white/[0.07] bg-[#080A08] aspect-[1.6/1] relative overflow-hidden">
@@ -238,12 +238,12 @@ export default function Home() {
               </div>
             </div>
             <div>
-              <h2 className="font-serif text-[32px] md:text-[44px] leading-[0.9] tracking-[-0.03em]">
+              <h2 data-headline className="font-serif text-[32px] md:text-[44px] leading-[0.9] tracking-[-0.03em]">
                 MARKETS WERE BUILT<br />
                 INSIDE DATABASES.<br />
                 <span className="text-white/40">NOW THEY LIVE<br />INSIDE NETWORKS.</span>
               </h2>
-              <p className="mt-4 text-[13px] leading-relaxed text-white/55 max-w-[480px]">Observe the fabric from above. Not a galaxy. Not sci-fi. A structured financial network where each edge is a verified relationship.</p>
+              <p data-body className="mt-4 text-[13px] leading-relaxed text-white/55 max-w-[480px]">Observe the fabric from above. Not a galaxy. Not sci-fi. A structured financial network where each edge is a verified relationship.</p>
               <Link href="/fabric" className="mt-6 inline-flex bg-[#F2F0E8] text-[#080A08] px-6 py-3 font-mono text-[11px] tracking-[0.16em] hover:bg-white">
                 OPEN MARKET TOPOLOGY →
               </Link>
@@ -258,8 +258,8 @@ export default function Home() {
       </section>
 
       {/* COMPOSABILITY */}
-      <section className="mx-auto max-w-[1600px] px-4 md:px-6 py-10 md:py-14">
-        <h2 className="font-serif text-[28px] md:text-[40px] leading-none tracking-[-0.03em]">
+      <section data-reveal className="mx-auto max-w-[1600px] px-4 md:px-6 py-10 md:py-14">
+        <h2 data-headline className="font-serif text-[28px] md:text-[40px] leading-none tracking-[-0.03em]">
           AN ASSET IS MORE<br />
           THAN A PRICE.
         </h2>
@@ -301,14 +301,14 @@ export default function Home() {
       </section>
 
       {/* MACHINE */}
-      <section className="border-y border-white/[0.07] bg-[#10130F]">
+      <section data-reveal className="border-y border-white/[0.07] bg-[#10130F]">
         <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-10 md:py-14 grid lg:grid-cols-[1.1fr_0.9fr] gap-8">
           <div>
-            <h2 className="font-serif text-[32px] md:text-[44px] leading-none tracking-[-0.03em]">
+            <h2 data-headline className="font-serif text-[32px] md:text-[44px] leading-none tracking-[-0.03em]">
               FINANCIAL CONTEXT<br />
               FOR MACHINES.
             </h2>
-            <p className="mt-4 text-[13px] leading-relaxed text-white/55 max-w-[520px]">Normalized Robinhood Chain market context designed for applications, analysts and autonomous agents. JSON, not screenshots.</p>
+            <p data-body className="mt-4 text-[13px] leading-relaxed text-white/55 max-w-[520px]">Normalized Robinhood Chain market context designed for applications, analysts and autonomous agents. JSON, not screenshots.</p>
             <Link href="/developers" className="mt-6 inline-flex border border-white/15 bg-white/[0.04] px-6 py-3 font-mono text-[11px] tracking-[0.16em] hover:bg-white hover:text-[#080A08]">
               VIEW API DOCS →
             </Link>
