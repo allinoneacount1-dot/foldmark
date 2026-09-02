@@ -15,10 +15,18 @@ export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; to
   const knownSet = new Set((knownAssets || []).map((a: any) => a.contract_address.toLowerCase()));
   const knownList = [...knownSet] as `0x${string}`[];
 
-  // 2) fetch ALL Transfer logs for this window (5 blocks ≈ 300 logs) — for discovery
-  //    we fetch once without address filter to discover new Robinhood Tokens
-  const allLogs = await client.getLogs({ event: TRANSFER_EVENT, fromBlock, toBlock });
-  const logs = knownList.length ? allLogs.filter((l) => knownSet.has(l.address.toLowerCase())) : [];
+  // 2) fetch logs — fast path: only known Stock Tokens (address filter, ~0-10 logs)
+  //    discovery is sampled (1 block) to stay <10s on Hobby
+  const logs = knownList.length
+    ? await client.getLogs({ address: knownList, event: TRANSFER_EVENT, fromBlock, toBlock })
+    : [];
+  // discovery: sample last block only to find new • Robinhood Token (cheap)
+  let allLogs: any[] = [];
+  let discovered = 0;
+  try {
+    const sampleFrom = toBlock > fromBlock ? toBlock : fromBlock;
+    allLogs = await client.getLogs({ event: TRANSFER_EVENT, fromBlock: sampleFrom, toBlock });
+  } catch {}
 
   let inserted = 0;
   for (const log of logs.slice(0, 500)) {
@@ -47,8 +55,8 @@ export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; to
   }
 
   // 3) auto-discovery: unknown contracts that had Transfer activity → check if "• Robinhood Token" (max 5 per run to stay <10s)
-  const unknownAddrs = [...new Set(allLogs.map((l) => l.address.toLowerCase()).filter((a) => !knownSet.has(a)))].slice(0, 5);
-  let discovered = 0;
+  const unknownAddrs = [...new Set(allLogs.map((l) => (l as any).address.toLowerCase()).filter((a) => !knownSet.has(a)))].slice(0, 3);
+  // discovered already declared above
   for (const addr of unknownAddrs) {
     try {
       const [symbol, name] = await Promise.all([
@@ -83,12 +91,13 @@ export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; to
   // advance cursor
   await supabase.from("indexer_state").upsert({ chain_id: 4663, last_processed_block: Number(toBlock), last_finalized_block: Number(toBlock), updated_at: new Date().toISOString() }, { onConflict: "chain_id" });
 
-  // flow windows (naive, per asset 24H)
+  // flow windows — skip if no new inserts to save time (Hobby 10s)
+  if (inserted > 0 || discovered > 0) {
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  const { data: assets } = await supabase.from("assets").select("id, contract_address").limit(20);
+  const { data: assets } = await supabase.from("assets").select("id, contract_address").limit(10);
   if (assets) {
     for (const a of assets) {
-      const { data: transfers } = await supabase.from("transfers").select("amount").eq("asset_id", a.id).gte("timestamp", since).limit(1000);
+      const { data: transfers } = await supabase.from("transfers").select("amount").eq("asset_id", a.id).gte("timestamp", since).limit(500);
       if (!transfers) continue;
       let inflow = 0, outflow = 0;
       transfers.forEach((t: any) => {
@@ -101,6 +110,7 @@ export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; to
         { onConflict: "entity_type,entity_id,window" }
       );
     }
+  }
   }
 
   return { inserted, fromBlock: Number(fromBlock), toBlock: Number(toBlock), logs: logs.length, allLogs: allLogs.length, discovered };
