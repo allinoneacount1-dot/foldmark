@@ -55,7 +55,7 @@ export default function Home() {
           <div className="max-w-[900px]">
             <div className="inline-flex items-center gap-2 border border-white/10 bg-white/[0.04] px-3 py-1.5">
               <span className="h-1.5 w-1.5 bg-[#C7FF4A] animate-pulse" />
-              <span className="font-mono text-[10px] tracking-[0.18em] text-white/70">ASSETLOOM / LIVE FINANCIAL NETWORK</span>
+              <span className="font-mono text-[10px] tracking-[0.18em] text-white/70">FOLDMARK / LIVE FINANCIAL NETWORK</span>
               <span className="font-mono text-[10px] tracking-[0.12em] text-white/30">ROBINHOOD CHAIN • 4663</span>
             </div>
             <h1 className="mt-6 font-serif text-[42px] md:text-[68px] leading-[0.85] tracking-[-0.04em]">
@@ -316,7 +316,7 @@ export default function Home() {
           <div className="border border-white/[0.07] bg-[#080A08] overflow-hidden">
             <div className="px-4 py-2 border-b border-white/[0.07] font-mono text-[10px] tracking-[0.14em] text-white/40">curl — AGENT CONTEXT</div>
             <pre className="p-4 font-mono text-[11px] leading-relaxed text-white/70 overflow-x-auto">
-{`curl https://api.assetloom.xyz/v1/context/NVDA
+{`curl https://api.foldmark.xyz/v1/context/NVDA
 
 {
   "asset": { "symbol": "NVDA", "type": "stock_token", "verified": true },

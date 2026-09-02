@@ -9,9 +9,9 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 const instrument = Instrument_Serif({ variable: "--font-display", weight: "400", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "ASSETLOOM — The Financial Fabric of Robinhood Chain",
+  title: "FOLDMARK — The Financial Fabric of Robinhood Chain",
   description: "See where capital moves before it becomes obvious. Financial intelligence, asset graph, and capital-flow observatory for Robinhood Chain.",
-  metadataBase: new URL("https://assetloom.xyz"),
+  metadataBase: new URL("https://foldmark.xyz"),
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -26,7 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <div className="h-7 w-7 border border-white/10 bg-white/[0.04] grid place-items-center">
                     <span className="h-3 w-3 border border-[#C7FF4A] rotate-45 block" aria-hidden />
                   </div>
-                  <span className="font-mono text-[11px] tracking-[0.28em]">ASSETLOOM</span>
+                  <span className="font-mono text-[11px] tracking-[0.28em]">FOLDMARK</span>
                   <span className="hidden md:inline font-mono text-[10px] tracking-[0.14em] text-white/40">/ ROBINHOOD CHAIN</span>
                 </a>
                 <nav className="hidden lg:flex items-center gap-1 text-[11px] tracking-[0.14em] font-mono">
@@ -62,11 +62,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <span className="text-white/40">IT IS A NETWORK.</span>
               </div>
               <div className="mt-8 flex flex-wrap gap-6 border-t border-white/[0.07] pt-6 font-mono text-[10px] tracking-[0.14em] text-white/40">
-                <span>ASSETLOOM / THE FINANCIAL FABRIC OF ROBINHOOD CHAIN</span>
+                <span>FOLDMARK / THE FINANCIAL FABRIC OF ROBINHOOD CHAIN</span>
                 <span className="ml-auto">NOT AFFILIATED WITH ROBINHOOD MARKETS, INC.</span>
               </div>
               <div className="mt-3 font-mono text-[10px] leading-relaxed text-white/30 max-w-3xl">
-                AssetLoom is an independent analytics application built on Robinhood Chain and is not affiliated with Robinhood Markets, Inc. Robinhood Chain brand rules respected. Stock Tokens verified via canonical registry only.
+                FoldMark is an independent analytics application built on Robinhood Chain and is not affiliated with Robinhood Markets, Inc. Robinhood Chain brand rules respected. Stock Tokens verified via canonical registry only.
               </div>
             </div>
           </footer>
