@@ -11,11 +11,11 @@ export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; to
 
   // fetch logs for Transfer — only for known Stock Tokens to stay within 10s Hobby limit
   const KNOWN = [
-    "0x0000000000000000000000000000000000000001",
-    "0x0000000000000000000000000000000000000002",
-    "0x0000000000000000000000000000000000000003",
-    "0x0000000000000000000000000000000000000004",
-    "0x0000000000000000000000000000000000000005",
+    "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+    "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+    "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+    "0x12f190a9F9d7D37a250758b26824B97CE941bF54",
+    "0xe93237C50D904957Cf27E7B1133b510C669c2e74",
   ] as const;
   const logs = await client.getLogs({ address: KNOWN as any, event: TRANSFER_EVENT, fromBlock, toBlock });
 
