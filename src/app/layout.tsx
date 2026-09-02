@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
+import Image from "next/image";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
 import { ConnectButton } from "@/components/ConnectButton";
@@ -23,9 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="mx-auto max-w-[1600px] flex h-[52px] items-center justify-between px-4 md:px-6">
               <div className="flex items-center gap-8">
                 <a href="/" className="flex items-center gap-3">
-                  <div className="h-7 w-7 border border-white/10 bg-white/[0.04] grid place-items-center">
-                    <span className="h-3 w-3 border border-[#C7FF4A] rotate-45 block" aria-hidden />
-                  </div>
+                  <Image src="/foldmark-mark.png" alt="Foldmark" width={28} height={28} className="h-7 w-7 object-contain" priority />
                   <span className="font-mono text-[11px] tracking-[0.28em]">FOLDMARK</span>
                   <span className="hidden md:inline font-mono text-[10px] tracking-[0.14em] text-white/40">/ ROBINHOOD CHAIN</span>
                 </a>
