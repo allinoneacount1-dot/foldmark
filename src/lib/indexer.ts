@@ -46,8 +46,8 @@ export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; to
     await supabase.from("wallets").upsert({ address: to.toLowerCase() }, { onConflict: "address", ignoreDuplicates: false });
   }
 
-  // 3) auto-discovery: unknown contracts that had Transfer activity → check if "• Robinhood Token"
-  const unknownAddrs = [...new Set(allLogs.map((l) => l.address.toLowerCase()).filter((a) => !knownSet.has(a)))].slice(0, 15);
+  // 3) auto-discovery: unknown contracts that had Transfer activity → check if "• Robinhood Token" (max 5 per run to stay <10s)
+  const unknownAddrs = [...new Set(allLogs.map((l) => l.address.toLowerCase()).filter((a) => !knownSet.has(a)))].slice(0, 5);
   let discovered = 0;
   for (const addr of unknownAddrs) {
     try {
