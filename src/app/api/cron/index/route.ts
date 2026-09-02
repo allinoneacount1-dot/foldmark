@@ -23,12 +23,12 @@ export async function GET(req: Request) {
     const latest = await client.getBlockNumber();
     const cursor = await getCursor();
     const from = BigInt((cursor as any).last_processed_block || 0);
-    const twenty = BigInt(20);
+    const five = BigInt(5);
     const one = BigInt(1);
-    const nineteen = BigInt(19);
+    const four = BigInt(4);
     const zero = BigInt(0);
-    const start = from === zero ? (latest > twenty ? latest - twenty : zero) : from + one;
-    const end = latest > start + nineteen ? start + nineteen : latest;
+    const start = from === zero ? (latest > five ? latest - five : zero) : from + one;
+    const end = latest > start + four ? start + four : latest;
     if (start > end) return NextResponse.json({ status: "UP_TO_DATE", latest: Number(latest), cursor });
 
     const result = await runIndexer({ fromBlock: start, toBlock: end });

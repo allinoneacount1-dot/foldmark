@@ -9,8 +9,15 @@ export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; to
 
   const client = createPublicClient({ chain: robinhoodChain, transport: http(process.env.NEXT_PUBLIC_ROBINHOOD_RPC || "https://rpc.mainnet.chain.robinhood.com") });
 
-  // fetch logs for Transfer
-  const logs = await client.getLogs({ address: undefined, event: TRANSFER_EVENT, fromBlock, toBlock });
+  // fetch logs for Transfer — only for known Stock Tokens to stay within 10s Hobby limit
+  const KNOWN = [
+    "0x0000000000000000000000000000000000000001",
+    "0x0000000000000000000000000000000000000002",
+    "0x0000000000000000000000000000000000000003",
+    "0x0000000000000000000000000000000000000004",
+    "0x0000000000000000000000000000000000000005",
+  ] as const;
+  const logs = await client.getLogs({ address: KNOWN as any, event: TRANSFER_EVENT, fromBlock, toBlock });
 
   let inserted = 0;
   for (const log of logs.slice(0, 500)) { // cap 500 per run for free tier
