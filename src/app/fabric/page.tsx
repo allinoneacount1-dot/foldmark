@@ -88,8 +88,8 @@ export default async function FabricPage({
 
       {/* instrument */}
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_var(--width-rail)]">
-        <div className="flex min-h-[26rem] min-w-0 flex-col border-b border-rule lg:min-h-0 lg:border-b-0 lg:border-r">
-          <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-col border-b border-rule lg:min-h-0 lg:border-b-0 lg:border-r">
+          <div className="flex h-[24rem] min-h-0 shrink-0 sm:h-[30rem] lg:h-auto lg:flex-1">
             <TopologyView
               graph={graph}
               emptyHint={
@@ -102,7 +102,7 @@ export default async function FabricPage({
           <Legend graph={graph} window={window} state={assetsResult.state} />
         </div>
 
-        <RailColumn className="lg:!static lg:max-h-none lg:overflow-visible">
+        <RailColumn revision={`${window}:${typeFilter ?? "all"}`} className="lg:!static lg:max-h-none lg:overflow-visible">
           <div className="flex flex-col gap-px overflow-y-auto bg-rule lg:h-[calc(100dvh-var(--nav-height)-3.25rem)]">
             <CapitalFlowModule window={window} activity={filtered} edges={edges} assets={assets} />
             <NetworkActivityModule window={window} activity={filtered} />
@@ -165,7 +165,7 @@ function Legend({
 
   return (
     <div className="shrink-0 border-t border-rule bg-void">
-      <dl className="shell flex flex-wrap items-center gap-x-8 gap-y-2 py-2.5">
+      <dl className="shell grid grid-cols-2 gap-x-6 gap-y-1.5 py-2.5 sm:flex sm:flex-wrap sm:items-center sm:gap-x-8 sm:gap-y-2">
         <Item term="POSITION" def={`${sources} sources left · ${assets} assets centre · ${destinations} destinations right`} />
         <Item term="RADIUS" def="Square root of observed value moved" />
         <Item term="EDGE WEIGHT" def="Value transferred along that relationship" />
@@ -181,7 +181,7 @@ function Legend({
 
 function Item({ term, def }: { term: string; def: string }) {
   return (
-    <div className="flex items-baseline gap-2">
+    <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
       <dt className="label-s shrink-0">{term}</dt>
       <dd className="text-body-s text-ink-faint">{def}</dd>
     </div>

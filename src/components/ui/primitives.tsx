@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { type DataState, STATE_LABEL, type Provenance } from "@/lib/data-state";
 
 /* ---------------------------------------------------------------- surface */
@@ -87,8 +87,20 @@ export function Display({
   );
 }
 
-export function Lede({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <p className={`max-w-[58ch] text-body text-ink-muted ${className}`}>{children}</p>;
+export function Lede({
+  children,
+  className = "",
+  style,
+}: {
+  children: ReactNode;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <p className={`max-w-[58ch] text-body text-ink-muted ${className}`} style={style}>
+      {children}
+    </p>
+  );
 }
 
 /* ----------------------------------------------------------------- state */
@@ -140,9 +152,9 @@ export function ProvenanceLine({ provenance, observedAt }: { provenance: Provena
 export function Methodology({ children, label = "METHODOLOGY" }: { children: ReactNode; label?: string }) {
   return (
     <details className="group border-t border-rule">
-      <summary className="label flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-ink-dim transition-colors duration-[180ms] hover:text-ink">
+      <summary className="label flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-ink-dim m-fast hover:text-ink">
         <span>{label}</span>
-        <span aria-hidden className="text-ink-faint transition-transform duration-[180ms] group-open:rotate-180">
+        <span aria-hidden className="text-ink-faint m-micro group-open:rotate-180">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25">
             <path d="m4.5 6 3.5 3.5L11.5 6" />
           </svg>
@@ -176,16 +188,22 @@ export function EmptyState({
   );
 }
 
-/** Skeleton row used by Suspense boundaries. Deliberately inert — no shimmer. */
+/**
+ * Skeleton rows for a Suspense boundary.
+ *
+ * It says "structure is arriving" and nothing else: no numerals, no colour, no
+ * chart shape. A loading state must never be mistakable for data, so it cannot
+ * imply a value, a direction or a magnitude.
+ */
 export function LoadingRows({ rows = 5, className = "" }: { rows?: number; className?: string }) {
   return (
     <div className={`divide-y divide-rule-faint ${className}`} aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading</span>
       {Array.from({ length: rows }, (_, i) => (
         <div key={i} className="flex items-center gap-4 px-4 py-3.5">
-          <span aria-hidden className="h-2 w-24 bg-elevated" />
-          <span aria-hidden className="h-2 flex-1 bg-elevated/60" />
-          <span aria-hidden className="h-2 w-16 bg-elevated" />
+          <span aria-hidden className="m-skeleton h-2 w-24" style={{ animationDelay: `${i * 90}ms` }} />
+          <span aria-hidden className="m-skeleton h-2 flex-1 opacity-60" style={{ animationDelay: `${i * 90 + 45}ms` }} />
+          <span aria-hidden className="m-skeleton h-2 w-16" style={{ animationDelay: `${i * 90 + 90}ms` }} />
         </div>
       ))}
     </div>

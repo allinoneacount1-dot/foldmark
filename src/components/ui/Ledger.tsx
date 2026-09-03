@@ -80,7 +80,7 @@ export function LedgerRow({
   children: ReactNode;
 }) {
   const cls =
-    "grid items-center gap-4 border-b border-rule-faint px-4 py-3.5 transition-colors duration-[180ms] last:border-b-0";
+    "grid items-center gap-4 border-b border-rule-faint px-4 py-3.5 m-fast last:border-b-0";
   const style = { gridTemplateColumns: template(columns) };
 
   if (href) {

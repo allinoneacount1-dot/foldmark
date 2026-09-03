@@ -172,7 +172,7 @@ export default async function DashboardPage({
                 align="stretch"
                 left={<MarketChart contract={selected.contract_address} symbol={selected.symbol} height={420} />}
                 right={
-                  <RailColumn>
+                  <RailColumn revision={`${window}:${selected.contract_address}`}>
                     <CapitalFlowModule window={window} activity={activity} edges={edges} assets={assets} />
                     <NetworkActivityModule window={window} activity={activity} />
                     <TopFlowsModule edges={edges} assets={assets} window={window} state={activity.state} />
@@ -212,7 +212,7 @@ export default async function DashboardPage({
             }
             provenance="ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS INDEXED BY FOLDMARK"
             aside={
-              <Link href="/fabric" className="label text-ink-muted transition-colors duration-[180ms] hover:text-ink">
+              <Link href="/fabric" className="label text-ink-muted m-fast hover:text-ink">
                 FULL TOPOLOGY →
               </Link>
             }
@@ -248,7 +248,7 @@ export default async function DashboardPage({
                         <li key={a.id}>
                           <Link
                             href={`/assets/${a.contract_address}`}
-                            className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-4 border-b border-rule-faint px-4 py-3 transition-colors duration-[180ms] last:border-b-0 hover:bg-raised"
+                            className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-4 border-b border-rule-faint px-4 py-3 m-fast last:border-b-0 hover:bg-raised"
                           >
                             <span className="truncate font-mono text-data text-ink">
                               {a.symbol}

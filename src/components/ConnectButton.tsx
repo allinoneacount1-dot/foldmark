@@ -42,7 +42,7 @@ export function ConnectButton() {
       <div className="flex items-center gap-1.5">
         <Link
           href={`/wallet/${address}`}
-          className="flex h-8 items-center gap-2 border border-rule px-2.5 font-mono text-label-s uppercase tracking-[0.14em] text-ink transition-colors duration-[180ms] hover:border-rule-strong"
+          className="flex h-8 items-center gap-2 border border-rule px-2.5 font-mono text-label-s uppercase tracking-[0.14em] text-ink m-fast hover:border-rule-strong"
         >
           <IconWallet size={13} className="text-signal" />
           <span className="tabular">{ensName || shortAddress(address)}</span>
@@ -53,7 +53,7 @@ export function ConnectButton() {
             type="button"
             onClick={() => switchChain({ chainId: robinhoodChain.id })}
             disabled={isSwitching}
-            className="on-signal h-8 border border-signal bg-signal px-2.5 font-mono text-label-s uppercase tracking-[0.14em] text-void transition-colors duration-[180ms] hover:bg-ink hover:border-ink disabled:opacity-50"
+            className="on-signal h-8 border border-signal bg-signal px-2.5 font-mono text-label-s uppercase tracking-[0.14em] text-void m-fast hover:bg-ink hover:border-ink disabled:opacity-50"
           >
             {isSwitching ? "SWITCHING…" : `SWITCH TO ${robinhoodChain.id}`}
           </button>
@@ -68,7 +68,7 @@ export function ConnectButton() {
           type="button"
           onClick={() => disconnect()}
           aria-label="Disconnect wallet"
-          className="hidden h-8 items-center border border-rule px-2.5 font-mono text-label-s uppercase tracking-[0.14em] text-ink-dim transition-colors duration-[180ms] hover:border-rule-strong hover:text-ink sm:flex"
+          className="hidden h-8 items-center border border-rule px-2.5 font-mono text-label-s uppercase tracking-[0.14em] text-ink-dim m-fast hover:border-rule-strong hover:text-ink sm:flex"
         >
           DISCONNECT
         </button>
@@ -84,7 +84,7 @@ export function ConnectButton() {
         type="button"
         onClick={() => (injected ? connect({ connector: injected }) : setShowModal(true))}
         disabled={isPending}
-        className="h-8 border border-rule-strong px-3 font-mono text-label-s uppercase tracking-[0.16em] text-ink transition-colors duration-[180ms] hover:bg-ink hover:text-void disabled:opacity-40"
+        className="h-8 border border-rule-strong px-3 font-mono text-label-s uppercase tracking-[0.16em] text-ink m-fast hover:bg-ink hover:text-void disabled:opacity-40"
       >
         {isPending ? "CONNECTING…" : "CONNECT"}
       </button>
@@ -106,7 +106,7 @@ export function ConnectButton() {
                 type="button"
                 onClick={() => setShowModal(false)}
                 aria-label="Close"
-                className="p-1 text-ink-faint transition-colors duration-[180ms] hover:text-ink"
+                className="p-1 text-ink-faint m-fast hover:text-ink"
               >
                 <IconClose size={14} />
               </button>
@@ -120,7 +120,7 @@ export function ConnectButton() {
                     connect({ connector: c });
                     setShowModal(false);
                   }}
-                  className="flex items-center justify-between border-b border-rule-faint px-4 py-3.5 text-left font-mono text-data text-ink transition-colors duration-[180ms] hover:bg-raised"
+                  className="flex items-center justify-between border-b border-rule-faint px-4 py-3.5 text-left font-mono text-data text-ink m-fast hover:bg-raised"
                 >
                   <span>{c.name}</span>
                   <span className="font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint">{c.id}</span>

@@ -278,7 +278,7 @@ export function MarketChart({
                 type="button"
                 onClick={() => setStyle(s)}
                 aria-pressed={style === s}
-                className={`h-7 border px-2 font-mono text-label-s uppercase tracking-[0.14em] transition-colors duration-[180ms] ${
+                className={`h-7 border px-2 font-mono text-label-s uppercase tracking-[0.14em] m-fast ${
                   style === s ? "border-ink bg-ink text-void" : "border-rule text-ink-dim hover:text-ink"
                 } -ml-px first:ml-0`}
               >
@@ -299,7 +299,7 @@ export function MarketChart({
                 onClick={() => setInterval(i)}
                 aria-pressed={interval === i}
                 title={enabled ? `${i} candles` : `${i} not supported by available observations`}
-                className={`h-7 shrink-0 border px-2 font-mono text-label-s uppercase tracking-[0.14em] transition-colors duration-[180ms] -ml-px first:ml-0 ${
+                className={`h-7 shrink-0 border px-2 font-mono text-label-s uppercase tracking-[0.14em] m-fast -ml-px first:ml-0 ${
                   interval === i
                     ? "border-ink bg-ink text-void"
                     : enabled
@@ -323,7 +323,7 @@ export function MarketChart({
                 setInterval(null);
               }}
               aria-pressed={range === w}
-              className={`h-7 border px-2 font-mono text-label-s uppercase tracking-[0.14em] transition-colors duration-[180ms] -ml-px first:ml-0 ${
+              className={`h-7 border px-2 font-mono text-label-s uppercase tracking-[0.14em] m-fast -ml-px first:ml-0 ${
                 range === w ? "border-signal text-signal" : "border-rule text-ink-dim hover:text-ink"
               }`}
             >
@@ -337,7 +337,7 @@ export function MarketChart({
             type="button"
             onClick={() => setShowVolume((v) => !v)}
             aria-pressed={showVolume}
-            className={`h-7 border px-2 font-mono text-label-s uppercase tracking-[0.14em] transition-colors duration-[180ms] ${
+            className={`h-7 border px-2 font-mono text-label-s uppercase tracking-[0.14em] m-fast ${
               showVolume ? "border-rule-strong text-ink" : "border-rule text-ink-dim hover:text-ink"
             }`}
           >
@@ -346,7 +346,7 @@ export function MarketChart({
           <button
             type="button"
             onClick={reset}
-            className="h-7 border border-rule px-2 font-mono text-label-s uppercase tracking-[0.14em] text-ink-dim transition-colors duration-[180ms] hover:text-ink"
+            className="h-7 border border-rule px-2 font-mono text-label-s uppercase tracking-[0.14em] text-ink-dim m-fast hover:text-ink"
           >
             RESET
           </button>
@@ -354,7 +354,7 @@ export function MarketChart({
             type="button"
             onClick={() => setFullscreen((v) => !v)}
             aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen chart"}
-            className="grid h-7 w-7 place-items-center border border-rule text-ink-dim transition-colors duration-[180ms] hover:text-ink"
+            className="grid h-7 w-7 place-items-center border border-rule text-ink-dim m-fast hover:text-ink"
           >
             {fullscreen ? <IconCollapse size={13} /> : <IconExpand size={13} />}
           </button>

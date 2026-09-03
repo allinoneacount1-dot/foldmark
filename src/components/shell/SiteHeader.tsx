@@ -26,6 +26,27 @@ export function SiteHeader() {
   const setMenu = (next: boolean | ((v: boolean) => boolean)) =>
     setDrawer((cur) => ({ open: typeof next === "function" ? next(cur.open && cur.at === pathname) : next, at: pathname }));
 
+  // Sticky state: the bar gains a surface once the page has moved beneath it.
+  // Only colour changes — height and layout are identical, so nothing shifts.
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    let frame = 0;
+    const read = () => {
+      frame = 0;
+      setScrolled(window.scrollY > 4);
+    };
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(read);
+    };
+    read();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
+
   // lock the page behind the drawer while it is open
   useEffect(() => {
     if (!menu) return;
@@ -38,12 +59,16 @@ export function SiteHeader() {
 
   return (
     <>
-      <header className="sticky top-0 z-50 border-b border-rule bg-void">
+      <header
+        className={`sticky top-0 z-50 border-b m-micro ${
+          scrolled ? "border-rule-strong bg-surface" : "border-rule bg-void"
+        }`}
+      >
         <div className="mx-auto flex h-[var(--nav-height)] max-w-[1560px] items-center gap-6 px-4 md:px-6">
           <Link
             href="/"
             aria-label="FOLDMARK — home"
-            className="flex shrink-0 items-center transition-opacity duration-[180ms] hover:opacity-80"
+            className="flex shrink-0 items-center m-fast hover:opacity-80"
           >
             <span className="hidden sm:block">
               <BrandLogo variant="horizontal" height={30} priority />
@@ -62,7 +87,7 @@ export function SiteHeader() {
                     <Link
                       href={item.href}
                       aria-current={active ? "page" : undefined}
-                      className={`relative flex h-[var(--nav-height)] items-center px-3 font-mono text-label-s uppercase tracking-[0.16em] transition-colors duration-[180ms] ${
+                      className={`relative flex h-[var(--nav-height)] items-center px-3 font-mono text-label-s uppercase tracking-[0.16em] m-fast ${
                         active ? "text-ink" : "text-ink-dim hover:text-ink"
                       }`}
                     >
@@ -80,7 +105,7 @@ export function SiteHeader() {
               type="button"
               onClick={() => setOpen(true)}
               aria-label="Search — Command K"
-              className="hidden h-8 items-center gap-2 border border-rule px-2.5 font-mono text-label-s uppercase tracking-[0.16em] text-ink-dim transition-colors duration-[180ms] hover:border-rule-strong hover:text-ink sm:flex"
+              className="hidden h-8 items-center gap-2 border border-rule px-2.5 font-mono text-label-s uppercase tracking-[0.16em] text-ink-dim m-fast hover:border-rule-strong hover:text-ink sm:flex"
             >
               <IconSearch size={13} />
               <span className="hidden md:inline">SEARCH</span>
@@ -95,7 +120,7 @@ export function SiteHeader() {
               aria-label={menu ? "Close menu" : "Open menu"}
               aria-expanded={menu}
               aria-controls="site-menu"
-              className="grid h-11 w-11 place-items-center text-ink-muted transition-colors duration-[180ms] hover:text-ink lg:hidden"
+              className="grid h-11 w-11 place-items-center text-ink-muted m-fast hover:text-ink lg:hidden"
             >
               {menu ? <IconClose size={17} /> : <IconMenu size={17} />}
             </button>
@@ -146,7 +171,7 @@ export function SiteHeader() {
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label={SOCIAL_LABELS.x}
-                  className="flex min-h-[52px] items-center gap-3 font-mono text-label tracking-[0.16em] text-ink-muted transition-colors duration-[180ms] hover:text-signal"
+                  className="flex min-h-[52px] items-center gap-3 font-mono text-label tracking-[0.16em] text-ink-muted m-fast hover:text-signal"
                 >
                   <IconX size={13} />
                   {SOCIAL_HANDLES.x}

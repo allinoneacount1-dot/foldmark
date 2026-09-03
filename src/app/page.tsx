@@ -64,20 +64,26 @@ export default async function Home() {
         <Split
           ratio="8:4"
           left={
+            /* A short staged entrance, in reading order: kicker, statement,
+               standfirst, actions. Roughly 400ms end to end — enough to feel
+               composed, too brief to be an intro sequence. */
             <div>
-              <p className="label-s">
+              <p className="label-s m-enter-fade">
                 {SITE.positioning.toUpperCase()} · CHAIN {CHAIN.id}
               </p>
-              <h1 className="mt-7 max-w-[16em] font-display text-[2.75rem] leading-[0.94] tracking-[-0.03em] text-ink sm:text-[3.75rem] lg:text-display-xl">
+              <h1
+                className="m-enter-unmask mt-7 max-w-[16em] font-display text-[2.75rem] leading-[0.94] tracking-[-0.03em] text-ink sm:text-[3.75rem] lg:text-display-xl"
+                style={{ animationDelay: "60ms" }}
+              >
                 Markets have structure.
                 <span className="block text-ink-dim">FOLDMARK makes it visible.</span>
               </h1>
-              <Lede className="mt-8">
+              <Lede className="m-enter-rise mt-8" style={{ animationDelay: "180ms" }}>
                 A market intelligence layer for Robinhood Chain. Raw chain activity becomes readable financial structure
                 — the assets that move, the addresses moving them, and the relationships between them. Every figure here
                 is measured, or it says what it is missing.
               </Lede>
-              <div className="mt-9 flex flex-wrap gap-3">
+              <div className="m-enter-rise mt-9 flex flex-wrap gap-3" style={{ animationDelay: "260ms" }}>
                 <ActionLink href="/fabric" tone="primary">
                   OPEN TOPOLOGY
                 </ActionLink>
@@ -90,7 +96,7 @@ export default async function Home() {
       </Band>
 
       {/* THE TAPE ---------------------------------------------------------- */}
-      <Tape label="Live index status">
+      <Tape label="Live index status" enterDelay={340}>
         <TapeCell
           label="INDEXED TO"
           measurement={withFreshness(indexer.lastProcessedBlock, now)}
@@ -115,7 +121,7 @@ export default async function Home() {
 
       {/* 01 — MARKET LEDGER ------------------------------------------------ */}
       <Band rhythm="dense" marker={{ index: "01", title: "MARKET LEDGER · 24H" }}>
-        <div data-reveal-item>
+        <div data-reveal-item="table">
           <Ledger columns={COLUMNS} caption="Assets observed on Robinhood Chain in the last 24 hours" minWidth={820}>
             {ranked.length ? (
               ranked.slice(0, 8).map((a) => {
@@ -166,8 +172,8 @@ export default async function Home() {
             )}
           </Ledger>
         </div>
-        <div className="mt-4 flex justify-end" data-reveal-item>
-          <Link href="/assets" className="label text-ink-muted transition-colors duration-[180ms] hover:text-ink">
+        <div className="mt-4 flex justify-end" data-reveal-item="default">
+          <Link href="/assets" className="label text-ink-muted m-fast hover:text-ink">
             FULL REGISTRY →
           </Link>
         </div>
@@ -175,7 +181,7 @@ export default async function Home() {
 
       {/* 02 — TOPOLOGY ----------------------------------------------------- */}
       <Band rhythm="signature" marker={{ index: "02", title: "MARKET TOPOLOGY" }}>
-        <div className="mb-8 max-w-[34rem]" data-reveal-item>
+        <div className="mb-8 max-w-[34rem]" data-reveal-item="heading">
           <Display size="l">An asset is more than a price.</Display>
           <Lede className="mt-4">
             It has counterparties, venues, and a position in a network of capital movement. FOLDMARK draws that network
@@ -183,7 +189,7 @@ export default async function Home() {
           </Lede>
         </div>
 
-        <div data-reveal-item>
+        <div data-reveal-item="graph">
           <Split
             ratio="rail"
             gap="gap-6"
@@ -199,7 +205,7 @@ export default async function Home() {
                 }
                 provenance="ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS INDEXED BY FOLDMARK"
                 aside={
-                  <Link href="/fabric" className="label text-ink-muted transition-colors duration-[180ms] hover:text-ink">
+                  <Link href="/fabric" className="label text-ink-muted m-fast hover:text-ink">
                     OPEN FULL MAP →
                   </Link>
                 }
@@ -226,7 +232,7 @@ export default async function Home() {
           ratio="7:5"
           gap="gap-8"
           left={
-            <div data-reveal-item>
+            <div data-reveal-item="table">
               {edges.length ? (
                 <div className="border border-rule bg-void px-4 py-2">
                   {edges.slice(0, 8).map((e) => {
@@ -256,7 +262,7 @@ export default async function Home() {
             </div>
           }
           right={
-            <div data-reveal-item className="max-w-[30rem]">
+            <div data-reveal-item="heading" className="max-w-[30rem]">
               <Display size="m">Follow the structure. Read the flow.</Display>
               <Lede className="mt-4">
                 A transfer is not an opinion. FOLDMARK ranks the strongest directed value edges in the window and leaves
@@ -283,7 +289,7 @@ export default async function Home() {
           ratio="5:7"
           gap="gap-8"
           left={
-            <div data-reveal-item className="max-w-[27rem]">
+            <div data-reveal-item="heading" className="max-w-[27rem]">
               <Display size="m">Financial context for machines.</Display>
               <Lede className="mt-4">
                 The same measurements, as JSON, for applications, analysts and agents. Fields that are not measured carry
@@ -295,7 +301,7 @@ export default async function Home() {
             </div>
           }
           right={
-            <div data-reveal-item className="min-w-0 border border-rule">
+            <div data-reveal-item="rail" className="min-w-0 border border-rule">
               <div className="flex items-center justify-between border-b border-rule px-4 py-2.5">
                 <span className="label text-ink">
                   GET /api/v1/context/{lead?.symbol ?? "{symbol}"}

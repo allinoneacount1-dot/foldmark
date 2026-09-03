@@ -52,7 +52,7 @@ export function AddressLookup({ autoFocus }: { autoFocus?: boolean }) {
         </div>
         <button
           type="submit"
-          className="-ml-px h-12 shrink-0 border border-rule-strong px-5 font-mono text-label-s uppercase tracking-[0.16em] text-ink transition-colors duration-[180ms] hover:bg-ink hover:text-void"
+          className="-ml-px h-12 shrink-0 border border-rule-strong px-5 font-mono text-label-s uppercase tracking-[0.16em] text-ink m-fast hover:bg-ink hover:text-void"
         >
           INSPECT
         </button>

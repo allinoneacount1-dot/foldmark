@@ -20,8 +20,8 @@ const SIZE = {
 } as const;
 
 const BASE =
-  "inline-flex items-center justify-center gap-2 font-mono uppercase tracking-[0.16em] " +
-  "transition-colors duration-[180ms] ease-out disabled:opacity-40 disabled:pointer-events-none";
+  "group inline-flex items-center justify-center gap-2 font-mono uppercase tracking-[0.16em] " +
+  "m-fast disabled:opacity-40 disabled:pointer-events-none";
 
 export function ActionLink({
   href,
@@ -45,14 +45,14 @@ export function ActionLink({
     return (
       <a href={href} target="_blank" rel="noopener noreferrer" className={cls} aria-label={ariaLabel}>
         {children}
-        <IconExternal size={13} />
+        <IconExternal size={13} className="m-fast group-hover:translate-x-[2px]" />
       </a>
     );
   }
   return (
     <Link href={href} className={cls} aria-label={ariaLabel}>
       {children}
-      <IconArrowRight size={14} />
+      <IconArrowRight size={14} className="m-fast group-hover:translate-x-[3px]" />
     </Link>
   );
 }
@@ -101,7 +101,7 @@ export function ChipLink({
       replace={replace}
       scroll={false}
       aria-current={active ? "true" : undefined}
-      className={`inline-flex h-8 shrink-0 items-center gap-1.5 border px-2.5 font-mono text-label-s uppercase tracking-[0.16em] transition-colors duration-[180ms] ${
+      className={`inline-flex h-8 shrink-0 items-center gap-1.5 border px-2.5 font-mono text-label-s uppercase tracking-[0.16em] m-fast ${
         active
           ? "border-ink bg-ink text-void"
           : "border-rule bg-transparent text-ink-dim hover:border-rule-strong hover:text-ink"
@@ -148,7 +148,7 @@ export function ExplorerLink({
       href={`${explorer}/address/${address}`}
       target="_blank"
       rel="noopener noreferrer"
-      className={`inline-flex items-center gap-1.5 font-mono text-data text-ink-muted underline-offset-4 transition-colors duration-[180ms] hover:text-ink hover:underline ${className}`}
+      className={`inline-flex items-center gap-1.5 font-mono text-data text-ink-muted underline-offset-4 m-fast hover:text-ink hover:underline ${className}`}
     >
       {children ?? address}
       <IconExternal size={12} />

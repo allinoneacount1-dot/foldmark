@@ -10,13 +10,25 @@ import { hasValue, STATE_LABEL, type Measured } from "@/lib/data-state";
  * user can reach that scroll.
  */
 
-export function Tape({ children, label = "Market status" }: { children: ReactNode; label?: string }) {
+export function Tape({
+  children,
+  label = "Market status",
+  /** ms to wait before the band appears, so it reads as the page coming online */
+  enterDelay,
+}: {
+  children: ReactNode;
+  label?: string;
+  enterDelay?: number;
+}) {
   return (
     <div
       role="region"
       aria-label={label}
       tabIndex={0}
-      className="w-full overflow-x-auto border-y border-rule bg-surface [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className={`w-full overflow-x-auto border-y border-rule bg-surface [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+        enterDelay === undefined ? "" : "m-enter-fade"
+      }`}
+      style={enterDelay === undefined ? undefined : { animationDelay: `${enterDelay}ms` }}
     >
       <div className="shell">
         <dl className="flex min-w-max items-stretch">{children}</dl>

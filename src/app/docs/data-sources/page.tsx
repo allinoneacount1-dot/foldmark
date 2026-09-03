@@ -113,7 +113,7 @@ export default function DataSourcesPage() {
                     <li key={d.id}>
                       <Link
                         href={`/docs/methodology#${d.id}`}
-                        className="inline-block border border-rule px-2 py-1 font-mono text-label-s uppercase tracking-[0.14em] text-ink-muted transition-colors duration-[180ms] hover:border-rule-strong hover:text-ink"
+                        className="inline-block border border-rule px-2 py-1 font-mono text-label-s uppercase tracking-[0.14em] text-ink-muted m-fast hover:border-rule-strong hover:text-ink"
                       >
                         {d.term}
                       </Link>

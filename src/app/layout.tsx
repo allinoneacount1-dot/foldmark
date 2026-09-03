@@ -5,6 +5,7 @@ import { Providers } from "@/components/Providers";
 import { MotionProvider } from "@/components/MotionProvider";
 import { SiteHeader } from "@/components/shell/SiteHeader";
 import { SiteFooter } from "@/components/shell/SiteFooter";
+import { RouteTransition } from "@/components/shell/RouteTransition";
 import { SITE } from "@/config/site";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"], display: "swap" });
@@ -52,7 +53,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <MotionProvider>
             <SiteHeader />
             <main id="main" className="flex flex-1 flex-col">
-              {children}
+              <RouteTransition>{children}</RouteTransition>
             </main>
             <SiteFooter />
           </MotionProvider>

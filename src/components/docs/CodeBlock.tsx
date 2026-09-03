@@ -38,7 +38,7 @@ export function CodeBlock({
         <button
           type="button"
           onClick={copy}
-          className="inline-flex items-center gap-1.5 font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint transition-colors duration-[180ms] hover:text-ink"
+          className="inline-flex items-center gap-1.5 font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint m-fast hover:text-ink"
         >
           {copied ? <IconCheck size={11} /> : <IconCopy size={11} />}
           {copied ? "COPIED" : "COPY"}

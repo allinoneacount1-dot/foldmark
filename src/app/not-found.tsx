@@ -20,7 +20,7 @@ export default function NotFound() {
             <li key={item.href}>
               <Link
                 href={item.href}
-                className="inline-flex h-9 items-center border border-rule px-3 font-mono text-label-s uppercase tracking-[0.16em] text-ink-muted transition-colors duration-[180ms] hover:border-rule-strong hover:text-ink"
+                className="inline-flex h-9 items-center border border-rule px-3 font-mono text-label-s uppercase tracking-[0.16em] text-ink-muted m-fast hover:border-rule-strong hover:text-ink"
               >
                 {item.label}
               </Link>

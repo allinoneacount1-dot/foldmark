@@ -24,7 +24,7 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
         <button
           type="button"
           onClick={reset}
-          className="mt-8 inline-flex h-11 items-center border border-rule-strong px-5 font-mono text-label-s uppercase tracking-[0.16em] text-ink transition-colors duration-[180ms] hover:bg-ink hover:text-void"
+          className="mt-8 inline-flex h-11 items-center border border-rule-strong px-5 font-mono text-label-s uppercase tracking-[0.16em] text-ink m-fast hover:bg-ink hover:text-void"
         >
           RETRY
         </button>

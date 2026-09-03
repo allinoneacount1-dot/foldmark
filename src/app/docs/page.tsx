@@ -25,13 +25,13 @@ export default function DocsOverview() {
       <div className="mt-6 flex flex-wrap gap-2">
         <Link
           href="/docs/getting-started"
-          className="inline-flex h-10 items-center border border-signal bg-signal px-4 font-mono text-label-s uppercase tracking-[0.16em] text-void transition-colors duration-[180ms] hover:border-ink hover:bg-ink"
+          className="inline-flex h-10 items-center border border-signal bg-signal px-4 font-mono text-label-s uppercase tracking-[0.16em] text-void m-fast hover:border-ink hover:bg-ink"
         >
           GET STARTED
         </Link>
         <Link
           href="/docs/api"
-          className="inline-flex h-10 items-center border border-rule-strong px-4 font-mono text-label-s uppercase tracking-[0.16em] text-ink transition-colors duration-[180ms] hover:bg-ink hover:text-void"
+          className="inline-flex h-10 items-center border border-rule-strong px-4 font-mono text-label-s uppercase tracking-[0.16em] text-ink m-fast hover:bg-ink hover:text-void"
         >
           VIEW API
         </Link>
@@ -182,7 +182,7 @@ FOLDMARK DATA MODEL   every value carries a state and a source
                 <Link
                   key={link.href}
                   href={link.href}
-                  className="bg-void p-4 transition-colors duration-[180ms] hover:bg-surface"
+                  className="bg-void p-4 m-fast hover:bg-surface"
                 >
                   <span className="font-mono text-data text-ink">{link.label}</span>
                   {link.summary ? <span className="mt-1 block text-body-s text-ink-faint">{link.summary}</span> : null}

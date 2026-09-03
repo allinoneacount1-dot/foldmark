@@ -67,7 +67,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
           />
           <button
             type="submit"
-            className="-ml-px h-12 shrink-0 border border-rule-strong px-5 font-mono text-label-s uppercase tracking-[0.16em] text-ink transition-colors duration-[180ms] hover:bg-ink hover:text-void"
+            className="-ml-px h-12 shrink-0 border border-rule-strong px-5 font-mono text-label-s uppercase tracking-[0.16em] text-ink m-fast hover:bg-ink hover:text-void"
           >
             SEARCH
           </button>
@@ -81,7 +81,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
               This is a well-formed address that the indexer has not seen on chain {CHAIN.id}. You can still open its
               page — it will show exactly what the index holds.
             </p>
-            <Link href={`/wallet/${raw.toLowerCase()}`} className="label mt-2 inline-block text-ink transition-colors duration-[180ms] hover:text-signal">
+            <Link href={`/wallet/${raw.toLowerCase()}`} className="label mt-2 inline-block text-ink m-fast hover:text-signal">
               OPEN WALLET →
             </Link>
           </div>
@@ -100,7 +100,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                   <li key={a.id}>
                     <Link
                       href={`/assets/${a.contract_address}`}
-                      className="flex items-baseline justify-between gap-3 border-b border-rule-faint px-4 py-3 transition-colors duration-[180ms] last:border-b-0 hover:bg-raised"
+                      className="flex items-baseline justify-between gap-3 border-b border-rule-faint px-4 py-3 m-fast last:border-b-0 hover:bg-raised"
                     >
                       <span className="min-w-0">
                         <span className="font-mono text-data text-ink">{a.symbol}</span>
@@ -124,7 +124,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                   <li key={w.address}>
                     <Link
                       href={`/wallet/${w.address}`}
-                      className="flex items-baseline justify-between gap-3 border-b border-rule-faint px-4 py-3 transition-colors duration-[180ms] last:border-b-0 hover:bg-raised"
+                      className="flex items-baseline justify-between gap-3 border-b border-rule-faint px-4 py-3 m-fast last:border-b-0 hover:bg-raised"
                     >
                       <span className="tabular truncate font-mono text-data text-ink">{shortAddress(w.address, 12, 8)}</span>
                       <span className="label-s shrink-0">OBSERVED</span>
@@ -152,7 +152,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                   <li key={p.id}>
                     <Link
                       href={`/protocol/${p.id}`}
-                      className="flex items-baseline justify-between gap-3 border-b border-rule-faint px-4 py-3 transition-colors duration-[180ms] last:border-b-0 hover:bg-raised"
+                      className="flex items-baseline justify-between gap-3 border-b border-rule-faint px-4 py-3 m-fast last:border-b-0 hover:bg-raised"
                     >
                       <span className="font-mono text-data text-ink">{p.name}</span>
                       <span className="label-s shrink-0">{p.category}</span>
@@ -177,7 +177,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                   <li key={c.address}>
                     <Link
                       href={`/wallet/${c.address}`}
-                      className="flex items-baseline justify-between gap-3 border-b border-rule-faint px-4 py-3 transition-colors duration-[180ms] last:border-b-0 hover:bg-raised"
+                      className="flex items-baseline justify-between gap-3 border-b border-rule-faint px-4 py-3 m-fast last:border-b-0 hover:bg-raised"
                     >
                       <span className="tabular truncate font-mono text-data text-ink">{shortAddress(c.address, 12, 8)}</span>
                       <span className="label-s shrink-0">{c.contract_type ?? "UNTYPED"}</span>

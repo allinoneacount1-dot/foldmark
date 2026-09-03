@@ -93,12 +93,30 @@ export function Split({
   );
 }
 
-/** The intelligence rail: one ruled column, not a stack of floating cards. */
-export function RailColumn({ children, className = "" }: { children: ReactNode; className?: string }) {
+/**
+ * The intelligence rail: one ruled column, not a stack of floating cards.
+ *
+ * Pass a `revision` that changes when the values inside do — the observation
+ * window, the selected asset — and the rail crossfades to its new contents. It
+ * never slides, because it has not moved: only the numbers it carries have.
+ */
+export function RailColumn({
+  children,
+  className = "",
+  revision,
+}: {
+  children: ReactNode;
+  className?: string;
+  /** Changes when the values change; omit for a rail whose contents are static. */
+  revision?: string;
+}) {
   return (
     <aside
+      key={revision}
       aria-label="Intelligence rail"
-      className={`flex flex-col gap-px bg-rule lg:sticky lg:top-[var(--nav-height)] lg:max-h-[calc(100dvh-var(--nav-height))] lg:overflow-y-auto ${className}`}
+      className={`flex flex-col gap-px bg-rule lg:sticky lg:top-[var(--nav-height)] lg:max-h-[calc(100dvh-var(--nav-height))] lg:overflow-y-auto ${
+        revision === undefined ? "" : "m-enter-fade"
+      } ${className}`}
     >
       {children}
     </aside>

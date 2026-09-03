@@ -46,12 +46,23 @@ export function TopologyView({
       </div>
 
       {selected ? (
-        <div className="absolute inset-x-0 bottom-0 z-20 border-t border-rule bg-raised lg:static lg:w-[17rem] lg:shrink-0 lg:border-t-0 lg:border-l">
-          <Inspector selection={selected} onClose={() => setSelected(null)} />
+        /* The inspector enters from the edge it is docked to — a bottom sheet
+           on narrow screens, a third column on wide ones. Changing entity
+           crossfades the contents rather than closing and reopening the panel,
+           which is why the key is the selection, not the panel itself. */
+        <div className="m-enter-rise absolute inset-x-0 bottom-0 z-20 border-t border-rule bg-raised lg:m-enter-slide lg:static lg:w-[17rem] lg:shrink-0 lg:border-t-0 lg:border-l">
+          <div key={selectionKey(selected)} className="m-enter-fade">
+            <Inspector selection={selected} onClose={() => setSelected(null)} />
+          </div>
         </div>
       ) : null}
     </div>
   );
+}
+
+/** Identity of the inspected thing, so a change crossfades its contents. */
+function selectionKey(selection: NonNullable<TopologySelection>): string {
+  return selection.kind === "edge" ? "edge:" + selection.edge.id : "node:" + selection.node.id;
 }
 
 function Inspector({ selection, onClose }: { selection: NonNullable<TopologySelection>; onClose: () => void }) {
@@ -87,7 +98,7 @@ function Inspector({ selection, onClose }: { selection: NonNullable<TopologySele
       <div className="flex flex-col gap-px bg-rule">
         <Link
           href={n.href}
-          className="label flex items-center justify-between bg-raised px-4 py-3 text-ink transition-colors duration-[180ms] hover:bg-elevated"
+          className="label flex items-center justify-between bg-raised px-4 py-3 text-ink m-fast hover:bg-elevated"
         >
           {isAsset ? "OPEN ASSET PASSPORT" : "OPEN WALLET"}
           <span aria-hidden>→</span>
@@ -96,7 +107,7 @@ function Inspector({ selection, onClose }: { selection: NonNullable<TopologySele
           href={`${CHAIN.explorer}/address/${isAsset ? n.contract : n.label}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="label flex items-center justify-between bg-raised px-4 py-3 text-ink-muted transition-colors duration-[180ms] hover:text-ink"
+          className="label flex items-center justify-between bg-raised px-4 py-3 text-ink-muted m-fast hover:text-ink"
         >
           VIEW ON BLOCKSCOUT
           <IconExternal size={12} />
@@ -114,7 +125,7 @@ function Head({ title, onClose }: { title: string; onClose: () => void }) {
         type="button"
         onClick={onClose}
         aria-label="Close inspector"
-        className="p-1 text-ink-faint transition-colors duration-[180ms] hover:text-ink"
+        className="p-1 text-ink-faint m-fast hover:text-ink"
       >
         <IconClose size={13} />
       </button>

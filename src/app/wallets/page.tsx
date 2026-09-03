@@ -113,7 +113,7 @@ export default async function WalletsPage() {
                         <li key={w.address}>
                           <a
                             href={`/wallet/${w.address}`}
-                            className="flex items-baseline justify-between gap-3 border-b border-rule-faint px-4 py-2.5 transition-colors duration-[180ms] last:border-b-0 hover:bg-raised"
+                            className="flex items-baseline justify-between gap-3 border-b border-rule-faint px-4 py-2.5 m-fast last:border-b-0 hover:bg-raised"
                           >
                             <span className="tabular truncate font-mono text-data-s text-ink">
                               {shortAddress(w.address, 10, 6)}

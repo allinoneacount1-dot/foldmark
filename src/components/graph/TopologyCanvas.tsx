@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GraphEdge, GraphNode, MarketGraph } from "@/lib/graph";
 import { compact, integer, shortAddress } from "@/lib/format";
+import { MOTION, easeOut, prefersReducedMotion, pulseCurve } from "@/lib/motion";
 
 /**
  * The market map.
@@ -110,8 +111,20 @@ export function TopologyCanvas({
     [metrics.rMax],
   );
 
+  /**
+   * Event animation.
+   *
+   * The graph is still at rest — no wandering, no physics, no idle loop. It
+   * moves only when the data underneath it changes, and then for one bounded
+   * window: the source pulses, value travels the edge, the destination pulses,
+   * and the highlight fades. After that the canvas stops repainting entirely.
+   */
+  const anim = useRef<{ start: number; entering: Set<string>; travelling: GraphEdge[] } | null>(null);
+  const seen = useRef<{ nodes: Set<string>; edges: Set<string> } | null>(null);
+  const drawRef = useRef<(now: number) => void>(() => {});
+
   // ---- paint -------------------------------------------------------------
-  useEffect(() => {
+  const draw = useCallback((frameTime: number) => {
     const canvas = canvasRef.current;
     if (!canvas || size.w === 0 || size.h === 0) return;
     const ctx = canvas.getContext("2d");
@@ -123,9 +136,30 @@ export function TopologyCanvas({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.w, size.h);
 
-    const dim = (id: string) => (neighbourhood ? (neighbourhood.has(id) ? 1 : 0.16) : 1);
     const activeId = selected?.kind === "node" ? selected.node.id : hover?.kind === "node" ? hover.node.id : null;
     const activeEdge = selected?.kind === "edge" ? selected.edge.id : hover?.kind === "edge" ? hover.edge.id : null;
+
+    // one bounded animation window, or nothing at all
+    const state = anim.current;
+    const progress = state ? Math.min(1, (frameTime - state.start) / MOTION.event) : 1;
+
+    /** Everything not in focus recedes; nothing is ever hidden outright. */
+    const focus = new Set<string>();
+    if (activeId) {
+      focus.add(activeId);
+      for (const e of graph.edges) {
+        if (e.source === activeId) focus.add(e.target);
+        if (e.target === activeId) focus.add(e.source);
+      }
+    }
+    const dim = (id: string) => {
+      let a = 1;
+      if (neighbourhood) a *= neighbourhood.has(id) ? 1 : 0.16;
+      else if (focus.size) a *= focus.has(id) ? 1 : 0.42;
+      // a node that has just entered the view arrives rather than appearing
+      if (state?.entering.has(id)) a *= easeOut(progress);
+      return a;
+    };
 
     // lane rules — the composition, drawn first
     ctx.strokeStyle = PALETTE.ruleFaint;
@@ -167,6 +201,52 @@ export function TopologyCanvas({
       }
       ctx.stroke();
       ctx.globalAlpha = 1;
+    }
+
+    /* Value travelling an edge: the one gesture in the product that says
+       "this just happened". Source pulse, traversal, destination pulse, fade. */
+    if (state && progress < 1) {
+      const travel = Math.max(0, Math.min(1, (progress - 0.1) / 0.65));
+      const fade = progress > 0.8 ? 1 - (progress - 0.8) / 0.2 : 1;
+
+      for (const e of state.travelling) {
+        const a = nodeById.get(e.source);
+        const b = nodeById.get(e.target);
+        if (!a || !b) continue;
+        const pa = project(a);
+        const pb = project(b);
+        const mx = (pa.x + pb.x) / 2;
+        const my = (pa.y + pb.y) / 2 + (b.y - a.y) * 12;
+
+        // quadratic point at t
+        const t = easeOut(travel);
+        const inv = 1 - t;
+        const x = inv * inv * pa.x + 2 * inv * t * mx + t * t * pb.x;
+        const y = inv * inv * pa.y + 2 * inv * t * my + t * t * pb.y;
+
+        ctx.globalAlpha = fade * 0.9;
+        ctx.fillStyle = PALETTE.signal;
+        ctx.beginPath();
+        ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // the endpoints acknowledge the arrival, briefly
+        const sourcePulse = pulseCurve(Math.min(1, progress / 0.22));
+        const targetPulse = progress > 0.62 ? pulseCurve(Math.min(1, (progress - 0.62) / 0.28)) : 0;
+        for (const [point, strength] of [
+          [pa, sourcePulse],
+          [pb, targetPulse],
+        ] as const) {
+          if (strength <= 0.01) continue;
+          ctx.globalAlpha = strength * 0.45 * fade;
+          ctx.strokeStyle = PALETTE.signal;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 6 + strength * 7, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
     }
 
     // nodes
@@ -241,6 +321,62 @@ export function TopologyCanvas({
     ctx.textAlign = "right";
     ctx.fillText("DESTINATION", size.w - 6, 12);
   }, [graph, size, hover, selected, neighbourhood, nodeById, project, radius, metrics]);
+
+  // Repaint whenever anything the scene depends on changes, and keep the
+  // animation driver pointed at the current closure.
+  useEffect(() => {
+    drawRef.current = draw;
+    draw(performance.now());
+  }, [draw]);
+
+  /**
+   * Detect what is new, then run one animation window. Nothing here loops:
+   * the frame callback cancels itself as soon as the window has elapsed, and
+   * a viewer who has asked for reduced motion never enters it at all.
+   */
+  useEffect(() => {
+    const nodeIds = new Set(graph.nodes.map((n) => n.id));
+    const edgeIds = new Set(graph.edges.map((e) => e.id));
+    const previous = seen.current;
+    seen.current = { nodes: nodeIds, edges: edgeIds };
+
+    if (prefersReducedMotion()) return;
+
+    // On the very first graph, introduce the structure rather than every edge.
+    const entering = previous
+      ? new Set([...nodeIds].filter((id) => !previous.nodes.has(id)))
+      : new Set<string>();
+
+    // Worth animating: value that moved in the newest indexed block, or a
+    // relationship that was not on screen a moment ago. Capped so a busy
+    // window cannot turn into a light show.
+    const travelling = previous
+      ? graph.edges.filter((e) => e.fresh || !previous.edges.has(e.id)).slice(0, 5)
+      : graph.edges.filter((e) => e.fresh).slice(0, 3);
+
+    if (!entering.size && !travelling.length) return;
+
+    anim.current = { start: performance.now(), entering, travelling };
+    let frame = 0;
+    const tick = (now: number) => {
+      const state = anim.current;
+      if (!state) return;
+      drawRef.current(now);
+      if (now - state.start < MOTION.event) {
+        frame = requestAnimationFrame(tick);
+      } else {
+        anim.current = null;
+        frame = 0;
+        drawRef.current(now); // settle to the static scene
+      }
+    };
+    frame = requestAnimationFrame(tick);
+
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      anim.current = null;
+    };
+  }, [graph]);
 
   // ---- hit testing -------------------------------------------------------
   const hitTest = useCallback(

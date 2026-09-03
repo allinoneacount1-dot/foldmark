@@ -10,7 +10,7 @@ export function SiteFooter() {
       <div className="mx-auto max-w-[1560px] px-4 md:px-6">
         <div className="grid gap-10 py-12 md:grid-cols-[minmax(0,1.5fr)_repeat(2,minmax(0,1fr))_auto] md:gap-12">
           <div className="flex flex-col items-start gap-5">
-            <BrandLogo variant="lockup" height={72} />
+            <BrandLogo variant="master" height={72} />
             <p className="max-w-[34ch] text-body-s text-ink-muted">{SITE.positioning}</p>
           </div>
 
@@ -22,7 +22,7 @@ export function SiteFooter() {
                   <li key={link.href}>
                     <Link
                       href={link.href}
-                      className="text-body-s text-ink-muted underline-offset-4 transition-colors duration-[180ms] hover:text-ink hover:underline"
+                      className="text-body-s text-ink-muted underline-offset-4 m-fast hover:text-ink hover:underline"
                     >
                       {link.label}
                     </Link>
@@ -39,7 +39,7 @@ export function SiteFooter() {
               target="_blank"
               rel="noopener noreferrer"
               aria-label={SOCIAL_LABELS.x}
-              className="mt-3 inline-flex items-center gap-2.5 border border-rule px-3 py-2.5 text-ink-muted transition-colors duration-[180ms] hover:border-signal/40 hover:text-signal"
+              className="mt-3 inline-flex items-center gap-2.5 border border-rule px-3 py-2.5 text-ink-muted m-fast hover:border-signal/40 hover:text-signal"
             >
               <IconX size={14} />
               <span className="font-mono text-data-s tracking-[0.04em]">{SOCIAL_HANDLES.x}</span>

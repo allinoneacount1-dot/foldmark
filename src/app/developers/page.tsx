@@ -114,7 +114,7 @@ export default async function DevelopersPage() {
                     <li>A 503 from /network means the chain RPC was unreachable, not that the chain is idle.</li>
                   </ul>
                   <p className="label-s border-t border-rule px-4 py-2 text-ink-faint">
-                    <Link href="/methodology" className="transition-colors duration-[180ms] hover:text-ink">
+                    <Link href="/methodology" className="m-fast hover:text-ink">
                       FULL METHODOLOGY →
                     </Link>
                   </p>
@@ -152,7 +152,7 @@ export default async function DevelopersPage() {
               <a
                 key={path}
                 href={path}
-                className="border border-rule px-3 py-1.5 font-mono text-label-s uppercase tracking-[0.14em] text-ink-muted transition-colors duration-[180ms] hover:border-rule-strong hover:text-ink"
+                className="border border-rule px-3 py-1.5 font-mono text-label-s uppercase tracking-[0.14em] text-ink-muted m-fast hover:border-rule-strong hover:text-ink"
               >
                 TRY {path}
               </a>

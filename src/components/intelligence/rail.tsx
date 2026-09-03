@@ -271,7 +271,7 @@ export function RailLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
       href={href}
-      className="label flex items-center justify-between border border-rule px-4 py-3 text-ink-muted transition-colors duration-[180ms] hover:border-rule-strong hover:text-ink"
+      className="label flex items-center justify-between border border-rule px-4 py-3 text-ink-muted m-fast hover:border-rule-strong hover:text-ink"
     >
       {label}
       <span aria-hidden>→</span>

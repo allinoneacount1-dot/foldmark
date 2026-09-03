@@ -60,7 +60,7 @@ export function AssetSearch({
           type="button"
           onClick={() => setValue("")}
           aria-label="Clear filter"
-          className="shrink-0 p-1 text-ink-faint transition-colors duration-[180ms] hover:text-ink"
+          className="shrink-0 p-1 text-ink-faint m-fast hover:text-ink"
         >
           <IconClose size={13} />
         </button>

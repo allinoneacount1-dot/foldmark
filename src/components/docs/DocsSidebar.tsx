@@ -35,7 +35,7 @@ export function DocsSidebar() {
           </span>
           <span
             aria-hidden
-            className={`shrink-0 text-ink-faint transition-transform duration-[180ms] ${open ? "rotate-180" : ""}`}
+            className={`shrink-0 text-ink-faint m-micro ${open ? "rotate-180" : ""}`}
           >
             <IconChevron size={16} />
           </span>
@@ -73,7 +73,7 @@ function Tree({ pathname, onNavigate }: { pathname: string; onNavigate?: () => v
                     href={link.href}
                     onClick={onNavigate}
                     aria-current={active ? "page" : undefined}
-                    className={`flex min-h-[36px] items-center border-l px-3 text-body-s transition-colors duration-[180ms] ${
+                    className={`flex min-h-[36px] items-center border-l px-3 text-body-s m-fast ${
                       active
                         ? "border-signal bg-surface text-ink"
                         : "border-rule-faint text-ink-muted hover:border-rule-strong hover:text-ink"

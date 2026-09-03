@@ -183,7 +183,7 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
             align="stretch"
             left={<MarketChart contract={asset.contract_address} symbol={asset.symbol} height={360} />}
             right={
-              <RailColumn>
+              <RailColumn revision={asset.id}>
                 <CapitalFlowModule window="7D" activity={{ ...activity24h, ...deriveActivity(window7d, now) }} edges={edges} assets={[asset]} />
                 <NetworkActivityModule window="7D" activity={{ ...activity24h, ...deriveActivity(window7d, now) }} />
                 <TopFlowsModule edges={edges} assets={[asset]} window="7D" state={window7d.state} />

@@ -45,7 +45,7 @@ export function DocSection({
           {title}
           <span
             aria-hidden
-            className="ml-2 align-middle font-mono text-[0.7em] text-ink-faint opacity-0 transition-opacity duration-[180ms] group-hover:opacity-100"
+            className="ml-2 align-middle font-mono text-[0.7em] text-ink-faint opacity-0 m-fast group-hover:opacity-100"
           >
             #
           </span>
@@ -157,7 +157,7 @@ export function DocFooterNav({ current }: { current: string }) {
   return (
     <nav aria-label="Documentation pagination" className="mt-12 grid gap-px border-t border-rule bg-rule sm:grid-cols-2">
       {prev ? (
-        <Link href={prev.href} className="group bg-void px-4 py-4 transition-colors duration-[180ms] hover:bg-surface">
+        <Link href={prev.href} className="group bg-void px-4 py-4 m-fast hover:bg-surface">
           <span className="label-s">← PREVIOUS</span>
           <span className="mt-1 block font-mono text-data text-ink">{prev.label}</span>
         </Link>
@@ -167,7 +167,7 @@ export function DocFooterNav({ current }: { current: string }) {
       {next ? (
         <Link
           href={next.href}
-          className="group bg-void px-4 py-4 text-right transition-colors duration-[180ms] hover:bg-surface"
+          className="group bg-void px-4 py-4 text-right m-fast hover:bg-surface"
         >
           <span className="label-s">NEXT →</span>
           <span className="mt-1 block font-mono text-data text-ink">{next.label}</span>

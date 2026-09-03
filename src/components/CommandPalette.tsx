@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { SearchHit } from "@/app/api/v1/search/route";
 import { IconSearch, IconClose, IconStockToken, IconWallet, IconProtocol, IconBlock } from "@/components/icons";
 import { shortAddress } from "@/lib/format";
+import { MOTION } from "@/lib/motion";
 
 const GROUP_ORDER = ["assets", "wallets", "protocols", "contracts"] as const;
 const GROUP_LABEL = {
@@ -123,7 +124,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-start justify-center bg-void/80 px-4 pt-[12vh]"
+      className="m-enter-fade fixed inset-0 z-[70] flex items-start justify-center bg-void/80 px-4 pt-[12vh]"
+      style={{ animationDuration: `${MOTION.fast}ms` }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -133,7 +135,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         role="dialog"
         aria-modal="true"
         aria-label="Search FOLDMARK"
-        className="w-full max-w-[640px] border border-rule-strong bg-surface"
+        className="m-enter-palette w-full max-w-[640px] border border-rule-strong bg-surface"
         onKeyDown={onKeyDown}
       >
         <div className="flex items-center gap-3 border-b border-rule px-4">
@@ -156,7 +158,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             type="button"
             onClick={onClose}
             aria-label="Close search"
-            className="shrink-0 p-2 text-ink-faint transition-colors duration-[180ms] hover:text-ink"
+            className="shrink-0 p-2 text-ink-faint m-fast hover:text-ink"
           >
             <IconClose size={14} />
           </button>
@@ -203,7 +205,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                       aria-selected={active}
                       onMouseEnter={() => setCursor(index)}
                       onClick={() => go(hit)}
-                      className={`flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors duration-[180ms] ${
+                      className={`flex w-full items-center gap-3 px-4 py-2.5 text-left m-fast ${
                         active ? "bg-raised" : "hover:bg-raised/60"
                       }`}
                     >
