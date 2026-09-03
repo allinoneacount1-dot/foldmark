@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Panel, PanelHeader, EmptyState } from "@/components/ui/primitives";
+import { Panel, PanelHeader, EmptyState, CoverageNote } from "@/components/ui/primitives";
 import { Histogram, Sparkline, MagnitudeRow, FlowBar } from "@/components/charts";
 import { compact, integer, shortAddress, signed } from "@/lib/format";
 import type { DataState } from "@/lib/data-state";
@@ -28,7 +28,8 @@ export function CapitalFlowModule({
   assets: AssetRow[];
 }) {
   const symbols = new Map(assets.map((a) => [a.id, a.symbol]));
-  const moved = edges.reduce((sum, e) => sum + e.amount, 0);
+  // Assets on the edges, not amounts added together: this module spans assets.
+  const assetsMoving = new Set(edges.map((e) => e.assetId).filter(Boolean)).size;
   const hasFlow = activity.transfers > 0;
 
   return (
@@ -38,9 +39,9 @@ export function CapitalFlowModule({
         <>
           <div className="grid grid-cols-2 gap-px bg-rule">
             <div className="bg-surface px-4 py-3">
-              <p className="label-s">VALUE MOVED</p>
-              <p className="tabular mt-1 font-mono text-data-l text-ink">{compact(moved)}</p>
-              <p className="label-s mt-0.5 text-ink-faint">TOKEN UNITS</p>
+              <p className="label-s">ASSETS MOVING</p>
+              <p className="tabular mt-1 font-mono text-data-l text-ink">{integer(assetsMoving)}</p>
+              <p className="label-s mt-0.5 text-ink-faint">ON OBSERVED EDGES</p>
             </div>
             <div className="bg-surface px-4 py-3">
               <p className="label-s">TRANSFERS</p>
@@ -109,6 +110,8 @@ export function NetworkActivityModule({ window, activity }: { window: FlowWindow
               Row cap reached — counts are a lower bound for this window.
             </p>
           ) : null}
+          {/* Says so when the index does not reach as far back as the label claims. */}
+          <CoverageNote note={activity.coverageNote} />
         </>
       ) : (
         <EmptyState

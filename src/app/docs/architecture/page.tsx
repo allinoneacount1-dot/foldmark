@@ -200,6 +200,48 @@ await sb.from("indexer_state").upsert(
           />
         </DocSection>
 
+        <DocSection id="testing" title="What the tests protect">
+          <P>
+            The suite does not chase coverage of the interface. It covers the rules that decide whether a number on
+            screen is true, because those are the failures that look exactly like working software: every figure
+            renders, every chart draws, and the answer is wrong.
+          </P>
+          <DocTable
+            caption="Test suites and the failure each one exists to prevent"
+            columns={["SUITE", "THE MISTAKE IT CATCHES"]}
+            rows={[
+              [
+                "unit-safety",
+                "Adding one NVDA to one AAPL and calling it two. Cross-asset rankings ordered by whichever token has the fewest decimals.",
+              ],
+              [
+                "provenance",
+                "A cache read recorded as a new observation, turning one real quote into a hundred rows of history that never happened.",
+              ],
+              [
+                "coverage",
+                "A cursor advancing past blocks the node refused to serve, and a 7D label over forty minutes of index.",
+              ],
+              [
+                "providers",
+                "Reading a provider's response wrong — most easily by labelling a token's total reserve across all pools as the depth behind one quote.",
+              ],
+            ]}
+          />
+          <P>
+            Nothing in the suite reaches the network or a database. Provider tests run against responses recorded from
+            the live services, so the suite tests this repository rather than whether a third party is up. It runs on
+            every push and every pull request, with no secrets available to it — which is also how the build is kept
+            working from a fresh clone.
+          </P>
+          <Note>
+            Three real defects were found by writing these tests rather than by using the product: a cache state that
+            was declared but never emitted, an unrecognised chart interval that produced one candle stamped{" "}
+            <code className="font-mono text-ink">NaN</code> spanning the whole dataset, and an unparseable observation
+            time being bucketed at epoch zero.
+          </Note>
+        </DocSection>
+
         <DocSection id="rendering" title="Rendering model">
           <DocTable
             caption="Where work happens"

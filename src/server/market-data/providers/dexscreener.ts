@@ -1,4 +1,4 @@
-import { cached } from "@/server/market-data/cache";
+import { cached, type CacheState } from "@/server/market-data/cache";
 import { recordFailure, recordRateLimited, recordSuccess, requestPermission } from "@/server/market-data/budget";
 import { freshnessFor, type MarketPrice } from "@/server/market-data/types";
 import { CHAIN } from "@/config/site";
@@ -86,17 +86,20 @@ export async function fetchTokenPrices(addresses: string[]): Promise<MarketPrice
   const unique = [...new Set(addresses.map((a) => a.toLowerCase()))].filter(Boolean);
   if (!unique.length) return [];
 
-  const best = new Map<string, { pair: Pair; liquidity: number }>();
+  const best = new Map<string, { pair: Pair; liquidity: number; fetchedAt: number; cacheState: CacheState }>();
 
   for (let i = 0; i < unique.length; i += MAX_ADDRESSES) {
     const chunk = unique.slice(i, i + MAX_ADDRESSES);
-    const payload = await cached(
+    const result = await cached(
       `ds:tokens:${chunk.join(",")}`,
       { ttlMs: TTL_MS, staleWhileRevalidateMs: SWR_MS, provider: "dexscreener" },
       () => call<{ pairs: Pair[] | null }>(`/tokens/${chunk.join(",")}`),
     );
 
-    for (const pair of payload?.pairs ?? []) {
+    // The network call that carried these pairs. Preserved across cache reads.
+    const { fetchedAt, cacheState } = result;
+
+    for (const pair of result.value?.pairs ?? []) {
       if (pair.chainId !== CHAIN_SLUG) continue;
       const base = pair.baseToken?.address?.toLowerCase();
       if (!base || !unique.includes(base)) continue;
@@ -105,12 +108,12 @@ export async function fetchTokenPrices(addresses: string[]): Promise<MarketPrice
 
       const liquidity = pair.liquidity?.usd ?? 0;
       const current = best.get(base);
-      if (!current || liquidity > current.liquidity) best.set(base, { pair, liquidity });
+      if (!current || liquidity > current.liquidity) best.set(base, { pair, liquidity, fetchedAt, cacheState });
     }
   }
 
-  const observedAt = Date.now();
-  return [...best.entries()].map(([address, { pair }]) => ({
+  const now = Date.now();
+  return [...best.entries()].map(([address, { pair, fetchedAt, cacheState }]) => ({
     assetId: null,
     contractAddress: address,
     chainId: CHAIN.id,
@@ -118,14 +121,21 @@ export async function fetchTokenPrices(addresses: string[]): Promise<MarketPrice
     currency: "USD",
     priceType: "DEX_SPOT" as const,
     source: "dexscreener" as const,
-    observedAt: new Date(observedAt).toISOString(),
-    // no per-pair quote time is published; their cache header implies up to 60s old
+    // No per-pair quote time is published, so the fetch time is the honest
+    // observation time. Their cache header implies the value may be up to a
+    // minute older than that, which the freshness state accounts for.
+    observedAt: new Date(fetchedAt).toISOString(),
+    fetchedAt: new Date(fetchedAt).toISOString(),
     providerTimestamp: null,
+    cacheState,
     blockNumber: null,
     pairAddress: pair.pairAddress ?? null,
+    dexId: pair.dexId ?? null,
     liquidityUsd: pair.liquidity?.usd ?? null,
+    // This one really is the reserve of the single pair that produced the quote.
+    liquidityBasis: "PAIR_RESERVE" as const,
     confidence: 0,
-    freshness: freshnessFor("DEX_SPOT", observedAt, observedAt),
+    freshness: freshnessFor("DEX_SPOT", fetchedAt, now),
   }));
 }
 
@@ -146,7 +156,7 @@ export type DiscoveredPair = {
  * remains the only identity. Results on other chains are dropped.
  */
 export async function searchPairs(query: string): Promise<DiscoveredPair[]> {
-  const payload = await cached(
+  const { value: payload } = await cached(
     `ds:search:${query.toLowerCase()}`,
     { ttlMs: 300_000, staleWhileRevalidateMs: 300_000, provider: "dexscreener" },
     () => call<{ pairs: Pair[] | null }>(`/search?q=${encodeURIComponent(query)}`),

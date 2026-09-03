@@ -4,7 +4,7 @@ import { Panel, PanelHeader, EmptyState, Methodology, StateTag } from "@/compone
 import { Ledger, LedgerRow, LedgerCell, LedgerEmpty, type LedgerColumn } from "@/components/ui/Ledger";
 import { getProtocols, getContracts, getAssets, getWindowActivity, foldByAddress, requestNow,
 } from "@/lib/queries";
-import { compact, integer, shortAddress } from "@/lib/format";
+import { integer, shortAddress } from "@/lib/format";
 import { CHAIN } from "@/config/site";
 
 export const metadata: Metadata = {
@@ -25,7 +25,7 @@ const CANDIDATE_COLUMNS: LedgerColumn[] = [
   { key: "addr", label: "ADDRESS", width: "minmax(170px, 1.6fr)" },
   { key: "peers", label: "COUNTERPARTIES", width: "minmax(120px, 0.9fr)", align: "right" },
   { key: "tx", label: "TRANSFERS", width: "minmax(100px, 0.8fr)", align: "right" },
-  { key: "value", label: "VALUE MOVED", width: "minmax(110px, 0.9fr)", align: "right", hideBelow: "sm" },
+  { key: "assets", label: "ASSETS", width: "minmax(110px, 0.9fr)", align: "right", hideBelow: "sm" },
   { key: "class", label: "CLASSIFICATION", width: "minmax(130px, 1fr)", align: "right", hideBelow: "md" },
 ];
 
@@ -121,9 +121,8 @@ export default async function ProtocolsPage() {
                           <span className="tabular font-mono text-data-s text-ink-muted">{integer(a.transfers)}</span>
                         </LedgerCell>
                         <LedgerCell column={CANDIDATE_COLUMNS[3]}>
-                          <span className="tabular font-mono text-data-s text-ink-muted">
-                            {compact(a.inbound + a.outbound)}
-                          </span>
+                          {/* Assets touched, not a summed amount: this list spans assets. */}
+                          <span className="tabular font-mono text-data-s text-ink-muted">{integer(a.assets)}</span>
                         </LedgerCell>
                         <LedgerCell column={CANDIDATE_COLUMNS[4]}>
                           <span className="label-s text-ink-faint">UNCLASSIFIED</span>

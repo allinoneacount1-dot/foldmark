@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAssetByAddress, getTransfersSince, foldEdges, foldByAddress, since } from "@/lib/queries";
+import { getAssetByAddress, getTransfersSince, foldEdges, foldByAddress, flowForAsset, since } from "@/lib/queries";
 import { WINDOWS, CHAIN, type FlowWindow } from "@/config/site";
 
 export const dynamic = "force-dynamic";
@@ -35,14 +35,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ contract
       last_block: e.lastBlock,
       classification: "UNCLASSIFIED",
     })),
-    addresses: addresses.map((a) => ({
-      address: a.address,
-      received: Number(a.inbound.toFixed(6)),
-      sent: Number(a.outbound.toFixed(6)),
-      net: Number((a.inbound - a.outbound).toFixed(6)),
-      transfers: a.transfers,
-      counterparties: a.counterparties,
-    })),
+    // One asset is in scope, so token units are comparable here.
+    addresses: addresses.map((a) => {
+      const flow = flowForAsset(a, asset.id);
+      return {
+        address: a.address,
+        received: flow ? Number(flow.inbound.toFixed(6)) : 0,
+        sent: flow ? Number(flow.outbound.toFixed(6)) : 0,
+        net: flow ? Number(flow.net.toFixed(6)) : 0,
+        unit: asset.symbol,
+        transfers: a.transfers,
+        counterparties: a.counterparties,
+      };
+    }),
     chain_id: CHAIN.id,
     updated_at: new Date().toISOString(),
     methodology:

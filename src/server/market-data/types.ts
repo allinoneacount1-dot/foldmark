@@ -1,4 +1,5 @@
 import type { ProviderId } from "@/server/market-data/registry";
+import type { CacheState } from "@/server/market-data/cache";
 
 /**
  * The normalized market model.
@@ -42,6 +43,17 @@ export type Freshness =
   /** No trustworthy source answered. */
   | "UNAVAILABLE";
 
+/**
+ * Four distinct times. Collapsing any pair of them fabricates history.
+ *
+ *   providerTimestamp  when the source says the value was true
+ *   fetchedAt          when the network call that carried it completed
+ *   observedAt         the semantic observation time we adopt
+ *   persistedAt        when a row was written (set by storage, not here)
+ *
+ * observedAt is providerTimestamp when the source publishes one, and fetchedAt
+ * otherwise. It is never the moment a cache entry happened to be read.
+ */
 export type MarketPrice = {
   assetId: string | null;
   contractAddress: string;
@@ -50,16 +62,49 @@ export type MarketPrice = {
   currency: string;
   priceType: PriceType;
   source: ProviderId;
-  /** When FOLDMARK recorded it. */
+  /** The semantic observation time. */
   observedAt: string;
+  /** When the network call that produced this value completed. */
+  fetchedAt: string;
   /** When the provider says the value was true, if it tells us. */
   providerTimestamp: string | null;
+  /** How this value reached us — a cache hit is not a new observation. */
+  cacheState: CacheState;
   blockNumber: number | null;
   pairAddress: string | null;
+  dexId: string | null;
   liquidityUsd: number | null;
-  /** 0..1. Depth and recency, not a model output — see reconcile.ts. */
+  /** What the liquidity figure actually measures, so the UI cannot mislabel it. */
+  liquidityBasis: LiquidityBasis | null;
+  /** 0..1. Observation quality from depth and age — not predictive confidence. */
   confidence: number;
   freshness: Freshness;
+};
+
+/**
+ * What a liquidity number is actually counting.
+ *
+ * GeckoTerminal's multi-token endpoint returns total_reserve_in_usd, which is
+ * the token's reserve across every pool it knows about — not the reserve of the
+ * single pool that produced the quote. Labelling that "pool reserve" would be
+ * wrong, so the basis travels with the value.
+ */
+export type LiquidityBasis =
+  /** Reserve of the one pair that produced this quote. */
+  | "PAIR_RESERVE"
+  /** The token's reserve summed across the provider's known pools. */
+  | "TOKEN_TOTAL_RESERVE";
+
+/** What each basis may be called in an interface. Never just "liquidity". */
+export const LIQUIDITY_BASIS_LABEL: Record<LiquidityBasis, string> = {
+  PAIR_RESERVE: "PAIR RESERVE",
+  TOKEN_TOTAL_RESERVE: "TOTAL RESERVE",
+};
+
+export const LIQUIDITY_BASIS_NOTE: Record<LiquidityBasis, string> = {
+  PAIR_RESERVE: "Reserve held by the single pair that produced this quote.",
+  TOKEN_TOTAL_RESERVE:
+    "The token's reserve summed across every pool the provider knows about — not the depth behind this one quote. It is an upper bound on what could be traded against here.",
 };
 
 /** Everything known about one asset's price right now, with the disagreements kept. */

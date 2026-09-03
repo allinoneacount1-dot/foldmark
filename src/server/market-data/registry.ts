@@ -41,7 +41,7 @@ export type ProviderFacts = {
   notes: string;
 };
 
-/** Probed 2026-09-03 from this repository against each live service. */
+/** Probed 2026-09-04 from this repository against each live service. */
 export const PROVIDERS: Record<ProviderId, ProviderFacts> = {
   rpc: {
     id: "rpc",
@@ -55,9 +55,9 @@ export const PROVIDERS: Record<ProviderId, ProviderFacts> = {
     termsUrl: null,
     attribution: null,
     commercialUse: "PERMITTED",
-    lastReviewed: "2026-09-03",
+    lastReviewed: "2026-09-04",
     notes:
-      "Public node, no key. Measured block time 0.110s and ~170ms round trip. The endpoint the repository shipped with (rpc.mainnet.chain.robinhood.com) refused every connection during probing, which is why the client fails over across a list.",
+      "Public node, no key. Re-probed 2026-09-04: block time 0.100s, ~860,558 blocks/day, 376ms round trip, and logs retained about 52 blocks deep — roughly five seconds, which is why ingestion follows the head rather than polling and catching up. The endpoint the repository shipped with (rpc.mainnet.chain.robinhood.com) still refuses every connection, and rpc.arrowrpc.com answers HTML rather than JSON-RPC, which is why the client fails over across an ordered list.",
   },
 
   onchain_pool: {
@@ -71,7 +71,7 @@ export const PROVIDERS: Record<ProviderId, ProviderFacts> = {
     termsUrl: null,
     attribution: null,
     commercialUse: "PERMITTED",
-    lastReviewed: "2026-09-03",
+    lastReviewed: "2026-09-04",
     notes: "Requires a verified pool address per asset. Until the contract registry is populated this cannot run, so it is not yet wired.",
   },
 
@@ -80,14 +80,14 @@ export const PROVIDERS: Record<ProviderId, ProviderFacts> = {
     label: "GeckoTerminal",
     chainSupport: "SUPPORTED",
     evidence:
-      'GET /api/v2/networks returned {"id":"robinhood","name":"Robinhood"}; /networks/robinhood/pools returned real pools including NVDA/USDG at $229.26 with $7.4M reserve.',
+      'GET /api/v2/networks returned {"id":"robinhood","name":"Robinhood"}; /networks/robinhood/pools returned 20 real pools. Re-probed 2026-09-04: NVDA/USDG at $229.07 with $7.78M reserve, USDG/WETH at $0.9999 with $24.1M reserve.',
     role: "DEX market reference and OHLCV backfill. Addressed by contract, never by ticker.",
     perMinute: 10,
     perMonth: null,
     termsUrl: "https://www.geckoterminal.com/terms",
     attribution: "Data by GeckoTerminal",
     commercialUse: "REVIEW_REQUIRED",
-    lastReviewed: "2026-09-03",
+    lastReviewed: "2026-09-04",
     notes:
       "The public tier is documented around 30 calls/minute; we budget 10 to stay clearly inside it. Best used for backfill and periodic refresh, never per-request.",
   },
@@ -97,14 +97,14 @@ export const PROVIDERS: Record<ProviderId, ProviderFacts> = {
     label: "DEX Screener",
     chainSupport: "SUPPORTED",
     evidence:
-      'GET /latest/dex/search returned pairs with chainId "robinhood" — 24 for USDG alone, with priceUsd, liquidity and volume.',
+      'GET /latest/dex/search returned pairs with chainId "robinhood" — 25 for USDG on the 2026-09-04 re-probe, with priceUsd, liquidity and volume.',
     role: "Secondary DEX market reference. Cross-check, never a single source of truth.",
     perMinute: 60,
     perMonth: null,
     termsUrl: "https://docs.dexscreener.com/api/reference",
     attribution: null,
     commercialUse: "REVIEW_REQUIRED",
-    lastReviewed: "2026-09-03",
+    lastReviewed: "2026-09-04",
     notes:
       "Responses carry cache-control: public, max-age=60, so anything faster than a minute is wasted. Their terms restrict products that compete with their screener and restrict redistribution — FOLDMARK must not make this a load-bearing dependency, and the owner should confirm the intended use before production.",
   },
@@ -120,7 +120,7 @@ export const PROVIDERS: Record<ProviderId, ProviderFacts> = {
     termsUrl: "https://www.coingecko.com/en/api_terms",
     attribution: "Price data by CoinGecko",
     commercialUse: "REVIEW_REQUIRED",
-    lastReviewed: "2026-09-03",
+    lastReviewed: "2026-09-04",
     notes:
       "The monthly quota is the real constraint: 10,000 calls is about 333 a day. Batched, server-side, at a global cadence measured in minutes — never per user and never per view.",
   },
@@ -137,7 +137,7 @@ export const PROVIDERS: Record<ProviderId, ProviderFacts> = {
     termsUrl: null,
     attribution: null,
     commercialUse: "UNKNOWN",
-    lastReviewed: "2026-09-03",
+    lastReviewed: "2026-09-04",
     notes:
       "Not wired. The endpoint shape came from the directive rather than from a response we received, so treating it as available would be a guess. It stays disabled until a request from this deployment actually succeeds.",
   },
@@ -153,7 +153,7 @@ export const PROVIDERS: Record<ProviderId, ProviderFacts> = {
     termsUrl: null,
     attribution: null,
     commercialUse: "PERMITTED",
-    lastReviewed: "2026-09-03",
+    lastReviewed: "2026-09-04",
     notes:
       "Reading a feed needs its aggregator address. Guessing one would produce confident nonsense, so this stays disabled until an address is verified and recorded in the contract registry.",
   },

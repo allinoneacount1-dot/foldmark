@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAssets, getWindowActivity } from "@/lib/queries";
+import { getAssets, getWindowActivity, coverageBlock } from "@/lib/queries";
 import { buildMarketGraph } from "@/lib/graph";
 import { WINDOWS, ASSET_TYPES, CHAIN, type AssetType, type FlowWindow } from "@/config/site";
 
@@ -27,6 +27,7 @@ export async function GET(req: Request) {
     window,
     type,
     state: activity.state,
+    index_coverage: coverageBlock(window, activity.coverage),
     nodes: graph.nodes.map((n) => ({
       id: n.id,
       kind: n.kind,

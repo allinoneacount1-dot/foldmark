@@ -1,8 +1,8 @@
 import { Panel, PanelHeader, EmptyState, Methodology } from "@/components/ui/primitives";
 import { IconSource } from "@/components/icons";
 import { compact, relativeTime } from "@/lib/format";
-import type { MarketSnapshot } from "@/server/market-data/types";
-import type { Freshness } from "@/server/market-data/types";
+import type { MarketSnapshot, Freshness } from "@/server/market-data/types";
+import { LIQUIDITY_BASIS_LABEL, LIQUIDITY_BASIS_NOTE } from "@/server/market-data/types";
 import type { DataState } from "@/lib/data-state";
 import { CHAIN } from "@/config/site";
 
@@ -59,9 +59,11 @@ export function MarketPanel({
       <PanelHeader title="MARKET PRICE" meta={symbol} state={FRESHNESS_STATE[c.freshness]} />
 
       <div className="border-b border-rule px-4 py-4">
-        <p className="tabular font-mono text-[1.75rem] leading-none text-ink">${compact(c.price, 4)}</p>
+        {/* Named for what it is: one venue's last print, not a market price. */}
+        <p className="label-s text-ink-faint">{PRICE_TYPE_LABEL[c.priceType] ?? c.priceType}</p>
+        <p className="tabular mt-1 font-mono text-[1.75rem] leading-none text-ink">${compact(c.price, 4)}</p>
         <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1">
-          <span className="label-s">{PRICE_TYPE_LABEL[c.priceType] ?? c.priceType}</span>
+          {c.dexId ? <span className="label-s text-ink-muted">{c.dexId.toUpperCase()}</span> : null}
           <span className="label-s flex items-center gap-1.5 text-ink-muted">
             <IconSource size={10} />
             {c.source.toUpperCase()}
@@ -72,16 +74,32 @@ export function MarketPanel({
 
       <dl className="grid grid-cols-2 gap-px bg-rule">
         <div className="bg-surface px-4 py-3">
-          <dt className="label-s">POOL RESERVE</dt>
+          {/*
+            The label follows the basis. GeckoTerminal's multi-token endpoint
+            returns the token's reserve across every pool it knows, which is not
+            the depth behind this quote — calling that "pool reserve" would be a
+            different and wrong claim.
+          */}
+          <dt className="label-s">{c.liquidityBasis ? LIQUIDITY_BASIS_LABEL[c.liquidityBasis] : "RESERVE"}</dt>
           <dd className="tabular mt-1 font-mono text-data text-ink">
-            {c.liquidityUsd ? `$${compact(c.liquidityUsd)}` : "—"}
+            {c.liquidityUsd ? `${compact(c.liquidityUsd)}` : "—"}
           </dd>
         </div>
         <div className="bg-surface px-4 py-3">
-          <dt className="label-s">CONFIDENCE</dt>
+          {/*
+            Not "confidence": that reads as a prediction. This is how well the
+            observation is supported by depth and how recent it is.
+          */}
+          <dt className="label-s">OBSERVATION QUALITY</dt>
           <dd className="tabular mt-1 font-mono text-data text-ink">{c.confidence.toFixed(2)}</dd>
         </div>
       </dl>
+
+      {c.liquidityBasis ? (
+        <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
+          {LIQUIDITY_BASIS_NOTE[c.liquidityBasis]}
+        </p>
+      ) : null}
 
       {others.length ? (
         <div className="border-t border-rule">
@@ -92,8 +110,11 @@ export function MarketPanel({
                 key={`${o.source}-${o.priceType}`}
                 className="flex items-baseline justify-between gap-3 border-b border-rule-faint py-2 last:border-b-0"
               >
-                <span className="label-s text-ink-muted">{o.source.toUpperCase()}</span>
-                <span className="tabular font-mono text-data-s text-ink">${compact(o.price, 4)}</span>
+                <span className="label-s truncate text-ink-muted">
+                  {o.source.toUpperCase()}
+                  {o.dexId ? <span className="text-ink-faint"> · {o.dexId.toUpperCase()}</span> : null}
+                </span>
+                <span className="tabular shrink-0 font-mono text-data-s text-ink">${compact(o.price, 4)}</span>
               </li>
             ))}
           </ul>
@@ -126,7 +147,7 @@ export function PriceWithSource({ snapshot, now }: { snapshot: MarketSnapshot | 
   if (!snapshot?.canonical) {
     return (
       <div className="flex flex-col gap-0.5">
-        <span className="label-s">PRICE</span>
+        <span className="label-s">DEX SPOT</span>
         <span className="font-mono text-data uppercase tracking-[0.14em] text-ink-faint">DATA UNAVAILABLE</span>
       </div>
     );
@@ -134,7 +155,8 @@ export function PriceWithSource({ snapshot, now }: { snapshot: MarketSnapshot | 
   const c = snapshot.canonical;
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="label-s">PRICE</span>
+      {/* "PRICE" alone overstates a single venue's last print. */}
+      <span className="label-s">{PRICE_TYPE_LABEL[c.priceType] ?? c.priceType}</span>
       <span className="tabular font-mono text-data text-ink">${compact(c.price, 4)}</span>
       <span className="label-s text-ink-faint">
         {c.source.toUpperCase()} · {relativeTime(c.observedAt, now)}

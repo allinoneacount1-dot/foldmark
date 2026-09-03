@@ -53,11 +53,22 @@ export default async function WalletPage({
   const assetById = new Map(assets.map((a) => [a.id, a]));
   const rows = transfers.rows;
 
-  // ---- fold this address' own position ----------------------------------
-  let inbound = 0;
-  let outbound = 0;
-  const counterparties = new Map<string, { inbound: number; outbound: number; transfers: number }>();
-  const exposure = new Map<string, { inbound: number; outbound: number; transfers: number }>();
+  /**
+   * Fold this address' own position.
+   *
+   * A wallet touches several assets, so nothing here accumulates one running
+   * total of "value". Amounts live inside an asset — where they have a unit and
+   * a meaning — and everything above that level is a count. Adding this
+   * address' NVDA to its USDG would produce a headline number describing
+   * nothing that happened.
+   */
+  type Flow = { inbound: number; outbound: number; transfers: number };
+  const newFlow = (): Flow => ({ inbound: 0, outbound: 0, transfers: 0 });
+
+  let transfersIn = 0;
+  let transfersOut = 0;
+  const counterparties = new Map<string, { transfers: number; inTransfers: number; byAsset: Map<string, Flow> }>();
+  const exposure = new Map<string, Flow>();
   const span = WINDOW_MS[window];
   const buckets = new Array<number>(24).fill(0);
 
@@ -66,18 +77,23 @@ export default async function WalletPage({
     const amount = fromBaseUnits(r.amount, decimals);
     const isIn = r.to_address === address;
     const peer = isIn ? r.from_address : r.to_address;
+    const assetId = r.asset_id ?? "";
 
-    if (isIn) inbound += amount;
-    else outbound += amount;
+    if (isIn) transfersIn += 1;
+    else transfersOut += 1;
 
-    const cp = counterparties.get(peer) ?? { inbound: 0, outbound: 0, transfers: 0 };
-    if (isIn) cp.inbound += amount;
-    else cp.outbound += amount;
+    const cp = counterparties.get(peer) ?? { transfers: 0, inTransfers: 0, byAsset: new Map<string, Flow>() };
     cp.transfers += 1;
+    if (isIn) cp.inTransfers += 1;
+    const cpFlow = cp.byAsset.get(assetId) ?? newFlow();
+    if (isIn) cpFlow.inbound += amount;
+    else cpFlow.outbound += amount;
+    cpFlow.transfers += 1;
+    cp.byAsset.set(assetId, cpFlow);
     counterparties.set(peer, cp);
 
     if (r.asset_id) {
-      const ex = exposure.get(r.asset_id) ?? { inbound: 0, outbound: 0, transfers: 0 };
+      const ex = exposure.get(r.asset_id) ?? newFlow();
       if (isIn) ex.inbound += amount;
       else ex.outbound += amount;
       ex.transfers += 1;
@@ -89,15 +105,26 @@ export default async function WalletPage({
     buckets[idx] += 1;
   }
 
+  /** The asset a relationship is mostly made of, so magnitude keeps its unit. */
+  const dominant = (byAsset: Map<string, Flow>) => {
+    let best: { assetId: string; flow: Flow } | null = null;
+    for (const [assetId, flow] of byAsset) {
+      if (!best || flow.transfers > best.flow.transfers) best = { assetId, flow };
+    }
+    return best;
+  };
+
   const rankedCounterparties = [...counterparties.entries()]
-    .map(([addr, v]) => ({ address: addr, ...v }))
-    .sort((a, b) => b.inbound + b.outbound - (a.inbound + a.outbound))
+    .map(([addr, v]) => ({ address: addr, ...v, main: dominant(v.byAsset) }))
+    .sort((a, b) => b.transfers - a.transfers)
     .slice(0, 12);
 
+  // Ranked by transfers: an exposure list spans assets, so summed units cannot
+  // order it. Each row still shows its own in / out, in its own symbol.
   const rankedExposure = [...exposure.entries()]
     .map(([id, v]) => ({ asset: assetById.get(id), ...v, net: v.inbound - v.outbound }))
     .filter((e) => e.asset)
-    .sort((a, b) => b.inbound + b.outbound - (a.inbound + a.outbound));
+    .sort((a, b) => b.transfers - a.transfers);
 
   const graph = buildMarketGraph(rows, assets, { limitAddresses: 6, limitAssets: 6 });
   const has = rows.length > 0;
@@ -105,12 +132,14 @@ export default async function WalletPage({
   const m = (v: number): Measured<number> =>
     has ? measured(v, INDEX, { observedAt: indexer.updatedAt, state: transfers.capped ? "PARTIAL" : "OK" }) : indexing(INDEX);
 
+  // A counterparty can trade several assets with this wallet, so the amount
+  // columns are replaced by one asset-scoped figure plus counts.
   const cpColumns: LedgerColumn[] = [
     { key: "addr", label: "COUNTERPARTY", width: "minmax(160px, 1.5fr)" },
     { key: "dir", label: "DIRECTION", width: "minmax(110px, 0.8fr)" },
     { key: "tx", label: "TRANSFERS", width: "minmax(90px, 0.7fr)", align: "right" },
-    { key: "in", label: "RECEIVED FROM", width: "minmax(110px, 0.9fr)", align: "right" },
-    { key: "out", label: "SENT TO", width: "minmax(110px, 0.9fr)", align: "right", hideBelow: "sm" },
+    { key: "assets", label: "ASSETS", width: "minmax(80px, 0.6fr)", align: "right" },
+    { key: "main", label: "MOSTLY", width: "minmax(150px, 1.1fr)", align: "right", hideBelow: "sm" },
   ];
 
   return (
@@ -139,14 +168,10 @@ export default async function WalletPage({
       </Shell>
 
       <Tape label="Wallet position">
-        <TapeCell label={`RECEIVED ${window}`} measurement={m(inbound)} format={(v) => compact(Number(v))} />
-        <TapeCell label={`SENT ${window}`} measurement={m(outbound)} format={(v) => compact(Number(v))} />
-        <TapeCell
-          label="NET FLOW"
-          measurement={m(inbound - outbound)}
-          format={(v) => signed(Number(v))}
-          emphasis={inbound - outbound > 0}
-        />
+        {/* Counts, not amounts: this line summarises a wallet across assets. */}
+        <TapeCell label={`RECEIVED ${window}`} measurement={m(transfersIn)} format={(v) => integer(Number(v))} />
+        <TapeCell label={`SENT ${window}`} measurement={m(transfersOut)} format={(v) => integer(Number(v))} />
+        <TapeStatic label="NET FLOW" value="PER ASSET" />
         <TapeCell label="TRANSFERS" measurement={m(rows.length)} format={(v) => integer(Number(v))} />
         <TapeCell label="COUNTERPARTIES" measurement={m(counterparties.size)} format={(v) => integer(Number(v))} />
         <TapeCell label="ASSETS TOUCHED" measurement={m(exposure.size)} format={(v) => integer(Number(v))} />
@@ -190,14 +215,16 @@ export default async function WalletPage({
                             />
                           </div>
                           <p className="label-s mt-1.5 text-ink-faint">
-                            {integer(e.transfers)} TX · IN {compact(e.inbound)} · OUT {compact(e.outbound)}
+                            {integer(e.transfers)} TX · IN {compact(e.inbound)} · OUT {compact(e.outbound)}{" "}
+                            {e.asset!.symbol}
                           </p>
                         </div>
                       ))}
                     </div>
                     <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
-                      Net is movement inside the window, not a balance. A balance requires the full transfer history for
-                      the address.
+                      Net is movement inside the window, in each asset&rsquo;s own units — never added across assets.
+                      It is not a balance: a balance requires the full transfer history for the address. Rows are
+                      ordered by transfers, the one quantity comparable between assets.
                     </p>
                   </Panel>
 
@@ -222,17 +249,30 @@ export default async function WalletPage({
                             </LedgerCell>
                             <LedgerCell column={cpColumns[1]}>
                               <span className="label-s">
-                                {c.inbound > 0 && c.outbound > 0 ? "BOTH WAYS" : c.inbound > 0 ? "SENT TO US" : "WE SENT"}
+                                {c.inTransfers > 0 && c.inTransfers < c.transfers
+                                  ? "BOTH WAYS"
+                                  : c.inTransfers > 0
+                                    ? "SENT TO US"
+                                    : "WE SENT"}
                               </span>
                             </LedgerCell>
                             <LedgerCell column={cpColumns[2]}>
                               <span className="tabular font-mono text-data-s text-ink">{integer(c.transfers)}</span>
                             </LedgerCell>
                             <LedgerCell column={cpColumns[3]}>
-                              <span className="tabular font-mono text-data-s text-signal">{compact(c.inbound)}</span>
+                              <span className="tabular font-mono text-data-s text-ink-muted">{integer(c.byAsset.size)}</span>
                             </LedgerCell>
                             <LedgerCell column={cpColumns[4]}>
-                              <span className="tabular font-mono text-data-s text-ink-muted">{compact(c.outbound)}</span>
+                              {c.main ? (
+                                <span className="tabular font-mono text-data-s text-ink-muted">
+                                  {compact(Math.max(c.main.flow.inbound, c.main.flow.outbound))}{" "}
+                                  <span className="text-ink-faint">
+                                    {assetById.get(c.main.assetId)?.symbol ?? "UNKNOWN"}
+                                  </span>
+                                </span>
+                              ) : (
+                                <span className="label-s text-ink-faint">—</span>
+                              )}
                             </LedgerCell>
                           </LedgerRow>
                         ))
@@ -262,13 +302,14 @@ export default async function WalletPage({
                         <MagnitudeRow
                           key={c.address}
                           label={shortAddress(c.address, 8, 6)}
-                          value={compact(c.inbound + c.outbound)}
-                          fraction={
-                            (c.inbound + c.outbound) /
-                            (rankedCounterparties[0].inbound + rankedCounterparties[0].outbound || 1)
+                          value={integer(c.transfers)}
+                          fraction={c.transfers / (rankedCounterparties[0].transfers || 1)}
+                          tone={c.inTransfers * 2 >= c.transfers ? "signal" : "ink"}
+                          meta={
+                            c.main
+                              ? `MOSTLY ${assetById.get(c.main.assetId)?.symbol ?? "UNKNOWN"} · ${integer(c.byAsset.size)} ASSET${c.byAsset.size === 1 ? "" : "S"}`
+                              : `${integer(c.byAsset.size)} ASSETS`
                           }
-                          tone={c.inbound >= c.outbound ? "signal" : "ink"}
-                          meta={`${integer(c.transfers)} TX`}
                         />
                       ))}
                     </div>

@@ -1,14 +1,23 @@
 import type { Metadata } from "next";
 import { Shell, Split, PageHead } from "@/components/layout/Frame";
-import { Panel, PanelHeader, EmptyState, Methodology, StateTag } from "@/components/ui/primitives";
+import { Panel, PanelHeader, EmptyState, Methodology, StateTag, CoverageNote } from "@/components/ui/primitives";
 import { ChipLink, ChipGroup } from "@/components/ui/controls";
 import { Ledger, LedgerRow, LedgerCell, LedgerEmpty, type LedgerColumn } from "@/components/ui/Ledger";
 import { Histogram, MagnitudeRow, FlowBar } from "@/components/charts";
 import { Figure } from "@/components/ui/Figure";
-import { getAssets, getWindowActivity, getFlowWindows, foldEdges, foldByAddress, requestNow,
+import {
+  getAssets,
+  getWindowActivity,
+  getFlowWindows,
+  foldEdges,
+  foldByAddress,
+  dominantFlow,
+  getLatestPrices,
+  requestNow,
 } from "@/lib/queries";
 import { compact, integer, shortAddress, signed } from "@/lib/format";
 import { WINDOWS, CHAIN, type FlowWindow } from "@/config/site";
+import { toNotional, notionalNote } from "@/lib/notional";
 
 export const metadata: Metadata = {
   title: "Capital flow",
@@ -34,7 +43,7 @@ const FLOW_COLUMNS: LedgerColumn[] = [
   { key: "from", label: "SOURCE", width: "minmax(140px, 1.2fr)" },
   { key: "to", label: "DESTINATION", width: "minmax(140px, 1.2fr)" },
   { key: "asset", label: "ASSET", width: "minmax(90px, 0.7fr)" },
-  { key: "value", label: "VALUE MOVED", width: "minmax(110px, 0.9fr)", align: "right" },
+  { key: "value", label: "AMOUNT", width: "minmax(110px, 0.9fr)", align: "right" },
   { key: "tx", label: "TRANSFERS", width: "minmax(90px, 0.7fr)", align: "right", hideBelow: "sm" },
   { key: "class", label: "CLASSIFICATION", width: "minmax(130px, 1fr)", align: "right", hideBelow: "md" },
 ];
@@ -55,17 +64,57 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
   const edges = foldEdges(activity.rows, assets, 20);
   const addresses = foldByAddress(activity.rows, assets, 40);
 
-  const receivers = [...addresses].sort((a, b) => b.inbound - a.inbound).slice(0, 8);
-  const senders = [...addresses].sort((a, b) => b.outbound - a.outbound).slice(0, 8);
-  const totalMoved = edges.reduce((s, e) => s + e.amount, 0);
+  /**
+   * This page looks across every asset at once, so nothing here may be ranked
+   * by token amount.
+   *
+   * One NVDA, one AAPL and one USDG are three different things; adding them
+   * produces a number with no unit, and sorting by it would order addresses by
+   * whichever asset happens to have the smallest denomination. Counts — how
+   * many transfers, how many counterparties, how many assets — are the only
+   * quantities that survive a comparison across assets, so counts are what rank
+   * a cross-asset view. Amounts appear only next to their own symbol.
+   */
+  const receivers = [...addresses]
+    .map((a) => ({ activity: a, dominant: dominantFlow(a, "inbound") }))
+    .filter((r) => r.dominant !== null)
+    .sort((a, b) => b.activity.transfers - a.activity.transfers)
+    .slice(0, 8);
 
-  // per-asset share of the value that moved in this window
-  const byAsset = new Map<string, number>();
+  const senders = [...addresses]
+    .map((a) => ({ activity: a, dominant: dominantFlow(a, "outbound") }))
+    .filter((r) => r.dominant !== null)
+    .sort((a, b) => b.activity.transfers - a.activity.transfers)
+    .slice(0, 8);
+
+  const totalTransfers = edges.reduce((s, e) => s + e.transfers, 0);
+
+  /**
+   * The one figure that legitimately spans assets.
+   *
+   * Notional value is comparable because it has a unit — USD — so it is the
+   * honest answer to "how much moved". It exists only where FOLDMARK observed a
+   * price recently enough for the multiplication to hold; assets without one
+   * are excluded and counted rather than estimated, and the panel says so.
+   */
+  const prices = await getLatestPrices(assets.map((a) => a.id));
+  const notional = toNotional(
+    edges.filter((e) => e.assetId).map((e) => ({ assetId: e.assetId!, amount: e.amount })),
+    prices,
+    now,
+  );
+
+  // Assets ranked by transfers observed — a count, so the comparison holds.
+  // Each asset's own moved amount is carried alongside, in its own units.
+  const byAsset = new Map<string, { transfers: number; amount: number }>();
   for (const e of edges) {
     if (!e.assetId) continue;
-    byAsset.set(e.assetId, (byAsset.get(e.assetId) ?? 0) + e.amount);
+    const acc = byAsset.get(e.assetId) ?? { transfers: 0, amount: 0 };
+    acc.transfers += e.transfers;
+    acc.amount += e.amount;
+    byAsset.set(e.assetId, acc);
   }
-  const assetShare = [...byAsset.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const assetShare = [...byAsset.entries()].sort((a, b) => b[1].transfers - a[1].transfers).slice(0, 8);
 
   return (
     <Shell>
@@ -85,9 +134,24 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
           }
         />
 
+        {activity.coverageNote ? (
+          <div className="mt-6 border border-rule">
+            <CoverageNote note={activity.coverageNote} />
+          </div>
+        ) : null}
+
         <div className="mt-6 grid gap-px bg-rule sm:grid-cols-2 lg:grid-cols-4">
           {[
-            ["VALUE MOVED", edges.length ? compact(totalMoved) : null, "TOKEN UNITS"],
+            ["TRANSFERS ON EDGES", edges.length ? integer(totalTransfers) : null, "OBSERVED"],
+            [
+              "NOTIONAL MOVED",
+              notional.usd !== null ? `${compact(notional.usd)}` : null,
+              notional.state === "PARTIAL"
+                ? `USD · ${Math.round(notional.coverage * 100)}% OF ASSETS PRICED`
+                : notional.state === "OK"
+                  ? "USD · ALL ASSETS PRICED"
+                  : "NO FRESH PRICE",
+            ],
             ["TRANSFERS", activity.transfers ? integer(activity.transfers) : null, window],
             ["DIRECTED EDGES", activity.uniquePairs ? integer(activity.uniquePairs) : null, "ADDRESS PAIRS"],
             ["ACTIVE ADDRESSES", activity.activeAddresses ? integer(activity.activeAddresses) : null, window],
@@ -170,61 +234,72 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
             left={
               <div className="grid gap-6 sm:grid-cols-2">
                 <Panel>
-                  <PanelHeader title="TOP DESTINATIONS" meta={window} state={receivers.length ? activity.state : "INDEXING"} />
+                  <PanelHeader title="MOST ACTIVE DESTINATIONS" meta={window} state={receivers.length ? activity.state : "INDEXING"} />
                   {receivers.length ? (
                     <div className="px-4 py-2">
-                      {receivers.map((a) => (
+                      {receivers.map(({ activity: a, dominant }) => (
                         <MagnitudeRow
                           key={a.address}
                           label={shortAddress(a.address, 8, 6)}
-                          value={compact(a.inbound)}
-                          fraction={a.inbound / (receivers[0]?.inbound || 1)}
+                          value={integer(a.transfers)}
+                          fraction={a.transfers / (receivers[0]?.activity.transfers || 1)}
                           tone="signal"
-                          meta={`${integer(a.transfers)} TX · ${integer(a.counterparties)} PEERS`}
+                          meta={`${compact(dominant!.inbound)} ${symbols.get(dominant!.assetId) ?? "UNKNOWN"} IN · ${integer(a.assets)} ASSET${a.assets === 1 ? "" : "S"}`}
                         />
                       ))}
                     </div>
                   ) : (
-                    <EmptyState state={activity.state} title="No inbound value observed" />
+                    <EmptyState state={activity.state} title="No inbound transfer observed" />
                   )}
                 </Panel>
 
                 <Panel>
-                  <PanelHeader title="TOP SOURCES" meta={window} state={senders.length ? activity.state : "INDEXING"} />
+                  <PanelHeader title="MOST ACTIVE SOURCES" meta={window} state={senders.length ? activity.state : "INDEXING"} />
                   {senders.length ? (
                     <div className="px-4 py-2">
-                      {senders.map((a) => (
+                      {senders.map(({ activity: a, dominant }) => (
                         <MagnitudeRow
                           key={a.address}
                           label={shortAddress(a.address, 8, 6)}
-                          value={compact(a.outbound)}
-                          fraction={a.outbound / (senders[0]?.outbound || 1)}
-                          meta={`${integer(a.transfers)} TX · ${integer(a.counterparties)} PEERS`}
+                          value={integer(a.transfers)}
+                          fraction={a.transfers / (senders[0]?.activity.transfers || 1)}
+                          meta={`${compact(dominant!.outbound)} ${symbols.get(dominant!.assetId) ?? "UNKNOWN"} OUT · ${integer(a.assets)} ASSET${a.assets === 1 ? "" : "S"}`}
                         />
                       ))}
                     </div>
                   ) : (
-                    <EmptyState state={activity.state} title="No outbound value observed" />
+                    <EmptyState state={activity.state} title="No outbound transfer observed" />
                   )}
                 </Panel>
 
                 <Panel className="sm:col-span-2">
-                  <PanelHeader title="TOP ASSETS BY VALUE MOVED" meta={window} state={assetShare.length ? activity.state : "INDEXING"} />
+                  <PanelHeader
+                    title="MOST TRANSFERRED ASSETS"
+                    meta={window}
+                    state={assetShare.length ? activity.state : "INDEXING"}
+                  />
                   {assetShare.length ? (
                     <div className="px-4 py-2">
-                      {assetShare.map(([id, amount]) => (
+                      {assetShare.map(([id, agg]) => (
                         <MagnitudeRow
                           key={id}
                           label={symbols.get(id) ?? shortAddress(id, 6, 4)}
-                          value={compact(amount)}
-                          fraction={amount / (assetShare[0]?.[1] || 1)}
+                          value={integer(agg.transfers)}
+                          fraction={agg.transfers / (assetShare[0]?.[1].transfers || 1)}
                           tone="signal"
+                          meta={`${compact(agg.amount)} ${symbols.get(id) ?? "UNITS"} MOVED`}
                         />
                       ))}
                     </div>
                   ) : (
-                    <EmptyState state={activity.state} title="No asset moved value in this window" />
+                    <EmptyState state={activity.state} title="No asset was transferred in this window" />
                   )}
+                  <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
+                    {notionalNote(notional)}
+                    {notional.oldestPriceAgeMs !== null
+                      ? ` Oldest quote used: ${Math.round(notional.oldestPriceAgeMs / 60_000)}m old.`
+                      : ""}
+                  </p>
                 </Panel>
               </div>
             }
@@ -240,11 +315,12 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                     <div className="flex flex-col">
                       {flowRows.rows.slice(0, 8).map((r) => {
                         const scale = Math.max(Math.abs(r.inflow), Math.abs(r.outflow), 1);
+                        const symbol = r.asset_id ? symbols.get(r.asset_id) : null;
                         return (
                           <div key={r.entity_id} className="border-b border-rule-faint px-4 py-3 last:border-b-0">
                             <div className="flex items-baseline justify-between gap-3">
-                              <a href={`/wallet/${r.entity_id}`} className="tabular truncate font-mono text-data-s text-ink hover:underline">
-                                {shortAddress(r.entity_id, 8, 6)}
+                              <a href={`/wallet/${r.address}`} className="tabular truncate font-mono text-data-s text-ink hover:underline">
+                                {shortAddress(r.address, 8, 6)}
                               </a>
                               <span
                                 className={`tabular shrink-0 font-mono text-data-s ${
@@ -253,6 +329,13 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                               >
                                 {signed(r.net_flow)}
                               </span>
+                            </div>
+                            {/* The unit is part of the number. Without it, this row is not a fact. */}
+                            <div className="mt-1 flex items-baseline justify-between gap-3">
+                              <span className="label-s text-ink-faint">
+                                {symbol ?? "UNKNOWN ASSET"} · {integer(r.transaction_count)} TX
+                              </span>
+                              <span className="label-s text-ink-faint">{symbol ?? "UNITS"}</span>
                             </div>
                             <div className="mt-2">
                               <FlowBar inflow={r.inflow} outflow={r.outflow} scale={scale} />
@@ -269,8 +352,10 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                     />
                   )}
                   <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
-                    Net flow is defined per address — received minus sent, in token units. It is not defined per token
-                    contract, where a transfer moves balance without changing supply.
+                    Net flow is defined per address <em className="not-italic text-ink-muted">and per asset</em> —
+                    received minus sent, in that asset&rsquo;s own units. It is never summed across assets, because a
+                    token unit only means something next to its own symbol. It is also not defined per token contract,
+                    where a transfer moves balance without changing supply.
                   </p>
                 </Panel>
 
@@ -305,8 +390,10 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                   </div>
                   <Methodology>
                     Every figure on this page is folded at request time from the transfers table over the trailing{" "}
-                    {window} window. VALUE MOVED sums transfer amounts in token units and does not convert to a
-                    currency, because no price oracle is wired to chain {CHAIN.id}. When a window reaches the row cap the
+                    {window} window. Because this view spans every asset, all rankings use counts — transfers,
+                    counterparties, assets touched — which are comparable. Token amounts are shown only beside the
+                    symbol they belong to and are never added across assets: one NVDA plus one USDG is not two of
+                    anything. Amounts are not converted to a currency here. When a window reaches the row cap the
                     result reads PARTIAL and every count is a lower bound.
                   </Methodology>
                 </div>

@@ -4,6 +4,7 @@ import { cacheStats } from "@/server/market-data/cache";
 import { PROVIDERS } from "@/server/market-data/registry";
 import { activeEndpoint, lastRpcLatencyMs } from "@/server/market-data/providers/rpc";
 import { CHAIN } from "@/config/site";
+import { isProviderEnabled, providerDisabledReason } from "@/config/providers";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,9 @@ export async function GET() {
         label: facts.label,
         status: h.status,
         chain_support: facts.chainSupport,
+        // Serving the chain and being permitted to call it are separate facts.
+        enabled: isProviderEnabled(h.id),
+        disabled_reason: providerDisabledReason(h.id),
         role: facts.role,
         evidence: facts.evidence,
         budget: {
@@ -58,6 +62,6 @@ export async function GET() {
     }),
     checked_at: new Date(now).toISOString(),
     methodology:
-      "Budgets are enforced before every outbound call and counted per server instance. A provider that fails three times in a row has its circuit opened with exponential backoff; a 429 opens it immediately. Providers whose chain support is not SUPPORTED are never called.",
+      "Budgets are enforced before every outbound call and counted per server instance. A provider that fails three times in a row has its circuit opened with exponential backoff; a 429 opens it immediately. Providers whose chain support is not SUPPORTED are never called, and neither are providers this deployment has not enabled — enabled is a separate flag because a source can serve the chain and still be restricted by its own terms.",
   });
 }

@@ -218,6 +218,101 @@ export async function getRecentTransfers(limit = 40): Promise<{ state: DataState
 
 /* ----------------------------------------------------------- aggregates */
 
+/**
+ * How far back the index actually reaches.
+ *
+ * A window is a claim: "this is the last 7 days". If the index only holds 40
+ * minutes, that claim is false, and no amount of correct arithmetic over the
+ * rows will make it true. Coverage is what lets a window know whether it can
+ * make its own claim, so the answer becomes PARTIAL with a stated reach instead
+ * of a confident number over a fraction of the period.
+ */
+export type IndexCoverage = {
+  state: DataState;
+  /** Oldest block the index has ever held. */
+  earliestBlock: number | null;
+  /** Time of the oldest indexed transfer. */
+  earliestAt: string | null;
+  /** The point after which nothing is missing. Resets when a gap is skipped. */
+  continuousSince: string | null;
+  /** Milliseconds of unbroken coverage as of `now`. */
+  continuousMs: number | null;
+  /** Blocks the indexer could not read and knowingly skipped. */
+  gapBlocks: number;
+  lastGapAt: string | null;
+};
+
+const COVERAGE_UNKNOWN: IndexCoverage = {
+  state: "INDEXING",
+  earliestBlock: null,
+  earliestAt: null,
+  continuousSince: null,
+  continuousMs: null,
+  gapBlocks: 0,
+  lastGapAt: null,
+};
+
+export async function getIndexCoverage(now: number): Promise<IndexCoverage> {
+  const client = db();
+  if (!client) return { ...COVERAGE_UNKNOWN, state: "UNAVAILABLE" };
+
+  const { data, error } = await client
+    .from("indexer_state")
+    .select("earliest_indexed_block, earliest_indexed_at, continuous_since, gap_blocks, last_gap_at")
+    .eq("chain_id", ROBINHOOD_CHAIN.id)
+    .maybeSingle();
+
+  // A deployment whose migration has not run reports INDEXING rather than
+  // claiming full coverage it cannot prove.
+  if (error || !data) return COVERAGE_UNKNOWN;
+
+  const continuousSince = (data.continuous_since as string | null) ?? null;
+  const parsed = continuousSince ? Date.parse(continuousSince) : NaN;
+
+  return {
+    state: continuousSince ? "OK" : "INDEXING",
+    earliestBlock:
+      data.earliest_indexed_block === null || data.earliest_indexed_block === undefined
+        ? null
+        : Number(data.earliest_indexed_block),
+    earliestAt: (data.earliest_indexed_at as string | null) ?? null,
+    continuousSince,
+    continuousMs: Number.isNaN(parsed) ? null : Math.max(0, now - parsed),
+    gapBlocks: Number(data.gap_blocks ?? 0),
+    lastGapAt: (data.last_gap_at as string | null) ?? null,
+  };
+}
+
+/**
+ * Whether a window is fully covered by the index.
+ *
+ * Returns the state the window should report. A window asking for more history
+ * than the index holds is PARTIAL — every count inside it is a lower bound over
+ * a shorter period than its own label claims.
+ */
+export function coverageState(window: FlowWindow, coverage: IndexCoverage, base: DataState): DataState {
+  if (base === "UNAVAILABLE" || base === "EMPTY") return base;
+  if (coverage.state === "UNAVAILABLE") return base;
+  // Unknown coverage cannot upgrade or downgrade a result on its own.
+  if (coverage.continuousMs === null) return base;
+  if (coverage.continuousMs >= WINDOW_MS[window]) return base;
+  return "PARTIAL";
+}
+
+/** Human sentence for a window whose index does not reach back far enough. */
+export function coverageNote(window: FlowWindow, coverage: IndexCoverage): string | null {
+  if (coverage.continuousMs === null) {
+    return "Index coverage is not recorded yet, so this window cannot confirm it spans its full period.";
+  }
+  const gap = coverage.gapBlocks > 0 ? ` ${coverage.gapBlocks} block(s) were skipped and are not included.` : "";
+  if (coverage.continuousMs >= WINDOW_MS[window]) {
+    return coverage.gapBlocks > 0 ? `Index covers the full ${window} window.${gap}` : null;
+  }
+  const hours = coverage.continuousMs / 3_600_000;
+  const reach = hours >= 1 ? `${hours.toFixed(1)}h` : `${Math.round(coverage.continuousMs / 60_000)}m`;
+  return `The index reaches back ${reach} unbroken, less than this ${window} window. Every figure here covers that shorter period and is a lower bound, not a ${window} total.${gap}`;
+}
+
 export type WindowActivity = {
   state: DataState;
   window: FlowWindow;
@@ -230,10 +325,17 @@ export type WindowActivity = {
   buckets: number[];
   bucketMinutes: number;
   rows: TransferRow[];
+  /** How far the index actually reaches, so the window can qualify itself. */
+  coverage: IndexCoverage;
+  /** Set when the index does not span the whole window. */
+  coverageNote: string | null;
 };
 
 export async function getWindowActivity(window: FlowWindow, now: number): Promise<WindowActivity> {
-  const { state, rows, capped } = await getTransfersSince(since(window, now));
+  const [{ state, rows, capped }, coverage] = await Promise.all([
+    getTransfersSince(since(window, now)),
+    getIndexCoverage(now),
+  ]);
   const addresses = new Set<string>();
   const assets = new Set<string>();
   const pairs = new Set<string>();
@@ -250,7 +352,8 @@ export async function getWindowActivity(window: FlowWindow, now: number): Promis
   }
 
   return {
-    state,
+    // A window shorter than its own label is PARTIAL, whatever the row count says.
+    state: coverageState(window, coverage, state),
     window,
     transfers: rows.length,
     activeAddresses: addresses.size,
@@ -260,6 +363,8 @@ export async function getWindowActivity(window: FlowWindow, now: number): Promis
     buckets,
     bucketMinutes: Math.round(span / BUCKETS / 60000),
     rows,
+    coverage,
+    coverageNote: coverageNote(window, coverage),
   };
 }
 
@@ -359,40 +464,118 @@ export function foldEdges(rows: TransferRow[], assets: AssetRow[], limit = 12): 
   return [...map.values()].sort((a, b) => b.amount - a.amount).slice(0, limit);
 }
 
-export type AddressActivity = {
-  address: string;
+/**
+ * What an address did in a window.
+ *
+ * Flow is kept PER ASSET because token units are not comparable across assets:
+ * one NVDA plus one AAPL is not two of anything. The only cross-asset figures
+ * here are counts — transfers, counterparties, distinct assets — which genuinely
+ * are comparable, and those are what cross-asset ranking uses.
+ */
+export type AssetFlow = {
+  assetId: string;
   inbound: number;
   outbound: number;
+  net: number;
+  transfers: number;
+};
+
+export type AddressActivity = {
+  address: string;
+  /** Comparable across assets. */
   transfers: number;
   counterparties: number;
+  assets: number;
+  /** Per-asset flow. Never summed together. */
+  byAsset: AssetFlow[];
 };
 
 export function foldByAddress(rows: TransferRow[], assets: AssetRow[], limit = 12): AddressActivity[] {
   const decimals = new Map(assets.map((a) => [a.id, a.decimals]));
-  const map = new Map<string, AddressActivity>();
-  const cp = new Map<string, Set<string>>();
-  const touch = (addr: string) => {
-    let e = map.get(addr);
-    if (!e) {
-      e = { address: addr, inbound: 0, outbound: 0, transfers: 0, counterparties: 0 };
-      map.set(addr, e);
-      cp.set(addr, new Set<string>());
+  const flows = new Map<string, Map<string, AssetFlow>>();
+  const counts = new Map<string, { transfers: number; cp: Set<string> }>();
+
+  const touchCount = (address: string) => {
+    let c = counts.get(address);
+    if (!c) {
+      c = { transfers: 0, cp: new Set() };
+      counts.set(address, c);
     }
-    return e;
+    return c;
   };
+
+  const touchFlow = (address: string, assetId: string) => {
+    let byAsset = flows.get(address);
+    if (!byAsset) {
+      byAsset = new Map();
+      flows.set(address, byAsset);
+    }
+    let f = byAsset.get(assetId);
+    if (!f) {
+      f = { assetId, inbound: 0, outbound: 0, net: 0, transfers: 0 };
+      byAsset.set(assetId, f);
+    }
+    return f;
+  };
+
   for (const r of rows) {
-    const amt = fromBaseUnits(r.amount, decimals.get(r.asset_id ?? "") ?? 18);
-    const f = touch(r.from_address);
-    const t = touch(r.to_address);
-    f.outbound += amt;
-    f.transfers += 1;
-    cp.get(r.from_address)!.add(r.to_address);
-    t.inbound += amt;
-    t.transfers += 1;
-    cp.get(r.to_address)!.add(r.from_address);
+    const from = touchCount(r.from_address);
+    const to = touchCount(r.to_address);
+    from.transfers += 1;
+    from.cp.add(r.to_address);
+    to.transfers += 1;
+    to.cp.add(r.from_address);
+
+    // An amount without an asset has no unit, so it contributes no flow.
+    if (!r.asset_id) continue;
+    const amt = fromBaseUnits(r.amount, decimals.get(r.asset_id) ?? 18);
+    const sender = touchFlow(r.from_address, r.asset_id);
+    const receiver = touchFlow(r.to_address, r.asset_id);
+    sender.outbound += amt;
+    sender.transfers += 1;
+    receiver.inbound += amt;
+    receiver.transfers += 1;
   }
-  for (const [addr, e] of map) e.counterparties = cp.get(addr)?.size ?? 0;
-  return [...map.values()].sort((a, b) => b.inbound + b.outbound - (a.inbound + a.outbound)).slice(0, limit);
+
+  return [...counts.entries()]
+    .map(([address, c]) => {
+      const byAsset = [...(flows.get(address)?.values() ?? [])].map((f) => ({ ...f, net: f.inbound - f.outbound }));
+      return {
+        address,
+        transfers: c.transfers,
+        counterparties: c.cp.size,
+        assets: byAsset.length,
+        byAsset: byAsset.sort((a, b) => b.transfers - a.transfers),
+      };
+    })
+    // Ranked by transfer count, which is comparable. Ranking by summed token
+    // units would order addresses by an arithmetic error.
+    .sort((a, b) => b.transfers - a.transfers || b.counterparties - a.counterparties)
+    .slice(0, limit);
+}
+
+/** One asset's flow for an address, when a single asset is genuinely in scope. */
+export function flowForAsset(activity: AddressActivity, assetId: string): AssetFlow | null {
+  return activity.byAsset.find((f) => f.assetId === assetId) ?? null;
+}
+
+/**
+ * The single asset that best characterises an address in a cross-asset list.
+ *
+ * A cross-asset view still wants to say something about magnitude, and the only
+ * honest way to do that is to name one asset and quote the amount in its units.
+ * "Most of what this address received was USDG" is a claim that survives
+ * inspection; a summed figure across three tokens is not.
+ *
+ * Selection is by transfer count, then by amount within that one asset — never
+ * by amount across assets, which is the comparison that has no meaning.
+ */
+export function dominantFlow(activity: AddressActivity, side: "inbound" | "outbound"): AssetFlow | null {
+  const moving = activity.byAsset.filter((f) => f[side] > 0);
+  if (!moving.length) return null;
+  return moving.reduce((best, f) =>
+    f.transfers !== best.transfers ? (f.transfers > best.transfers ? f : best) : f[side] > best[side] ? f : best,
+  );
 }
 
 /* ------------------------------------------------------------- structure */
@@ -527,30 +710,57 @@ export async function getContracts(): Promise<{ state: DataState; rows: Contract
 
 export type PriceObservation = { price: number; source: string; observedAt: string };
 
+/**
+ * The latest price per asset.
+ *
+ * Reads canonical_prices — the series where reconciliation has already picked
+ * one observation per moment by a stated rule. Reading raw observations here
+ * would mean whichever provider answered last wins, which is not a decision,
+ * just an ordering.
+ *
+ * `prices` is the pre-reconciliation table and is consulted only as a fallback,
+ * for deployments whose migration has not run yet. Nothing is invented if both
+ * are empty: the map comes back empty and every caller renders a state.
+ */
 export async function getLatestPrices(assetIds: string[]): Promise<Map<string, PriceObservation>> {
   const out = new Map<string, PriceObservation>();
   const client = db();
   if (!client || !assetIds.length) return out;
-  const { data, error } = await client
-    .from("prices")
-    .select("asset_id, price, source, observed_at")
-    .in("asset_id", assetIds)
-    .order("observed_at", { ascending: false })
-    .limit(500);
-  if (error || !data) return out;
-  for (const row of data as { asset_id: string; price: number; source: string; observed_at: string }[]) {
-    if (!out.has(row.asset_id)) {
-      out.set(row.asset_id, { price: Number(row.price), source: row.source, observedAt: row.observed_at });
+
+  const read = async (table: "canonical_prices" | "prices") => {
+    const { data, error } = await client
+      .from(table)
+      .select("asset_id, price, source, observed_at")
+      .in("asset_id", assetIds)
+      .order("observed_at", { ascending: false })
+      .limit(500);
+    if (error || !data) return;
+    for (const row of data as { asset_id: string; price: number; source: string; observed_at: string }[]) {
+      if (!out.has(row.asset_id)) {
+        out.set(row.asset_id, { price: Number(row.price), source: row.source, observedAt: row.observed_at });
+      }
     }
-  }
+  };
+
+  await read("canonical_prices");
+  if (out.size < assetIds.length) await read("prices");
   return out;
 }
 
 /* ----------------------------------------------------------------- flows */
 
+/**
+ * A precomputed flow row.
+ *
+ * Net flow is stored per address AND asset, because a net figure only means
+ * something inside one unit. `entity_id` is therefore `<address>:<asset_id>`,
+ * and `address`/`asset_id` are the parsed halves.
+ */
 export type FlowWindowRow = {
   entity_type: string;
   entity_id: string;
+  address: string;
+  asset_id: string | null;
   window: FlowWindow;
   inflow: number;
   outflow: number;
@@ -569,9 +779,43 @@ export async function getFlowWindows(
     .from("flow_windows")
     .select("entity_type, entity_id, window, inflow, outflow, net_flow, transaction_count, unique_counterparties, calculated_at")
     .eq("window", window)
+    // Only per-asset rows are readable. Rows written before flow was split by
+    // asset summed incomparable units, so they are excluded rather than shown.
+    .eq("entity_type", "address_asset")
     .order("net_flow", { ascending: false })
     .limit(50);
   if (error) return { state: "UNAVAILABLE", rows: [] };
-  const rows = (data ?? []) as FlowWindowRow[];
+  const rows = ((data ?? []) as Omit<FlowWindowRow, "address" | "asset_id">[]).map((r) => {
+    const sep = r.entity_id.lastIndexOf(":");
+    return {
+      ...r,
+      address: sep > 0 ? r.entity_id.slice(0, sep) : r.entity_id,
+      asset_id: sep > 0 ? r.entity_id.slice(sep + 1) : null,
+    };
+  });
   return { state: rows.length ? "OK" : "INDEXING", rows };
+}
+
+/**
+ * The coverage block every windowed API response carries.
+ *
+ * A consumer reading `transfers: 412` for a 7D window has no way to know the
+ * index only reaches back two hours unless the response says so. This is that
+ * sentence, in a shape a machine can act on.
+ */
+export function coverageBlock(window: FlowWindow, coverage: IndexCoverage) {
+  const complete = coverage.continuousMs !== null && coverage.continuousMs >= WINDOW_MS[window];
+  return {
+    state: coverage.state,
+    /** False when the index reaches back less far than the window asks for. */
+    covers_window: complete,
+    window_ms: WINDOW_MS[window],
+    earliest_indexed_block: coverage.earliestBlock,
+    earliest_indexed_time: coverage.earliestAt,
+    continuous_since: coverage.continuousSince,
+    coverage_duration_ms: coverage.continuousMs,
+    gap_blocks: coverage.gapBlocks,
+    last_gap_at: coverage.lastGapAt,
+    note: coverageNote(window, coverage),
+  };
 }

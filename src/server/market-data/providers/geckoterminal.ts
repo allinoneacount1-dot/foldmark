@@ -84,14 +84,18 @@ export async function fetchTokenPrices(addresses: string[]): Promise<MarketPrice
     const chunk = unique.slice(i, i + MAX_ADDRESSES);
     const key = `gt:tokens:${chunk.join(",")}`;
 
-    const payload = await cached(
+    const result = await cached(
       key,
       { ttlMs: TTL_MS, staleWhileRevalidateMs: SWR_MS, provider: "geckoterminal" },
       () => call<{ data: { attributes: TokenAttributes }[] }>(`/networks/${NETWORK}/tokens/multi/${chunk.join(",")}`),
     );
 
+    const payload = result.value;
     if (!payload?.data) continue;
-    const observedAt = Date.now();
+
+    // The time the network call completed — preserved across every subsequent
+    // read of this cache entry. Reading a cache is not observing the market.
+    const fetchedAt = result.fetchedAt;
 
     for (const row of payload.data) {
       const a = row.attributes;
@@ -107,14 +111,21 @@ export async function fetchTokenPrices(addresses: string[]): Promise<MarketPrice
         currency: "USD",
         priceType: "DEX_SPOT",
         source: "geckoterminal",
-        observedAt: new Date(observedAt).toISOString(),
-        // the endpoint carries no per-token timestamp; the observation time is ours
+        // No per-token timestamp is published, so the fetch time is the best
+        // honest observation time available.
+        observedAt: new Date(fetchedAt).toISOString(),
+        fetchedAt: new Date(fetchedAt).toISOString(),
         providerTimestamp: null,
+        cacheState: result.cacheState,
         blockNumber: null,
         pairAddress: null,
+        dexId: null,
         liquidityUsd: Number.isFinite(liquidity) ? liquidity : null,
+        // total_reserve_in_usd is the token's reserve across every pool this
+        // provider knows about, not the reserve of one pair.
+        liquidityBasis: "TOKEN_TOTAL_RESERVE",
         confidence: 0,
-        freshness: freshnessFor("DEX_SPOT", observedAt, observedAt),
+        freshness: freshnessFor("DEX_SPOT", fetchedAt, Date.now()),
       });
     }
   }
@@ -138,7 +149,7 @@ export async function fetchPoolOhlcv(
   limit = 300,
 ): Promise<OhlcvCandle[]> {
   const key = `gt:ohlcv:${poolAddress}:${timeframe}:${aggregate}:${limit}`;
-  const payload = await cached(
+  const { value: payload } = await cached(
     key,
     { ttlMs: 120_000, staleWhileRevalidateMs: 300_000, provider: "geckoterminal" },
     () =>
@@ -169,7 +180,7 @@ export type PoolSummary = {
 
 /** The pools on this chain, strongest reserve first — the input to pool discovery. */
 export async function fetchTopPools(page = 1): Promise<PoolSummary[]> {
-  const payload = await cached(
+  const { value: payload } = await cached(
     `gt:pools:${page}`,
     { ttlMs: 300_000, staleWhileRevalidateMs: 600_000, provider: "geckoterminal" },
     () =>

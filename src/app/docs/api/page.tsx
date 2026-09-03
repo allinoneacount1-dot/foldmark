@@ -99,9 +99,11 @@ export default async function ApiReference() {
       path: "/api/v1/flows",
       summary: "Directed value edges across the whole chain, plus precomputed per-address net flow.",
       params: [windowParam, { name: "limit", values: "1–100", note: "Defaults to 20." }],
-      returns: "window, state, partial, edges[], top_addresses[], precomputed_net_flow",
+      returns:
+        "window, state, partial, index_coverage, notional, edges[], top_addresses[], precomputed_net_flow. Each top address carries flow_by_asset[] rather than one total: token amounts are never added across assets, so cross-asset ranking uses transfers and counterparties. notional is the USD conversion, PARTIAL when any asset lacked a fresh price and naming what was excluded.",
       errors: [],
-      freshness: "Edges are computed at request time; precomputed_net_flow follows the last indexer run.",
+      freshness:
+        "Edges are computed at request time; precomputed_net_flow follows the last indexer run. index_coverage says whether the index reaches back far enough to span the requested window.",
       example: `curl "${SITE.url}/api/v1/flows?window=24H&limit=20"`,
     },
     {
@@ -148,11 +150,37 @@ export default async function ApiReference() {
       example: `curl "${SITE.url}/api/v1/search?q=${symbol}"`,
     },
     {
+      id: "market",
+      path: "/api/v1/market/{contract}",
+      summary: "Current market state for one contract, with every source that informed it.",
+      params: [],
+      returns:
+        "contract, asset, price{value, price_type, venue, pair_address, observed_at, fetched_at, persisted_at, cache_state, liquidity_usd, liquidity_basis, observation_quality}, observations[], divergence, field_semantics, attribution",
+      errors: [
+        { code: "400", when: "The path is not an address. An asset is addressed by contract, never by ticker." },
+      ],
+      freshness:
+        "Reads stored market state written by the ingestion pass, so calling it makes no provider request. price_type names what the number is — DEX_SPOT is one venue's last print, not a consolidated or settlement price. observation_quality describes how well the observation is supported by depth and recency; it predicts nothing.",
+      example: `curl ${SITE.url}/api/v1/market/${contract}`,
+    },
+    {
+      id: "provider-status",
+      path: "/api/v1/provider-status",
+      summary: "Provider health, quota spend, chain support and terms review, in one place.",
+      params: [],
+      returns: "chain_id, rpc, cache, providers[] with status, chain_support, enabled, disabled_reason, budget, terms",
+      errors: [],
+      freshness:
+        "Live counters from this server instance. chain_support is a probed fact about the provider; enabled is this deployment's decision — a source can serve the chain and still be restricted by its own terms.",
+      example: `curl ${SITE.url}/api/v1/provider-status`,
+    },
+    {
       id: "context",
       path: "/api/v1/context/{asset}",
       summary: "Unified agent context for one asset, addressed by symbol or contract.",
       params: [windowParam],
-      returns: "asset, observation_window, activity, price, liquidity, net_flow, top_counterparties, indexer, sources, methodology",
+      returns:
+        "asset, observation_window, activity, price, liquidity, net_flow, top_counterparties, indexer, sources, methodology. Counterparty amounts carry a unit field, because they are scoped to this one asset — the only scope in which a token amount means anything.",
       errors: [{ code: "404", when: "No asset resolves for that symbol or contract." }],
       freshness: "Computed at request time. Shares its builder with the landing page sample.",
       example: `curl "${SITE.url}/api/v1/context/${symbol}?window=24H"`,

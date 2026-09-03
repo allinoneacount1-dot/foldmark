@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
-import { collectObservations, persistObservations, TIER_INTERVAL_MS, type Tier } from "@/server/market-data";
+import { collectObservations, persistObservations, writeMarketState, TIER_INTERVAL_MS, type Tier } from "@/server/market-data";
 import { reconcileAll } from "@/server/market-data/reconcile";
+import { acquireLease, releaseLease } from "@/server/market-data/lease";
 import { CHAIN } from "@/config/site";
 
 /**
@@ -45,8 +46,20 @@ export type IngestionResult = {
   considered: number;
   refreshed: number;
   observations: number;
-  written: number;
-  skipped: number;
+  /** Observations that came from a real network call and could become history. */
+  eligible: number;
+  /** Observations rejected because they were cache reads, not new observations. */
+  fromCache: number;
+  observationsWritten: number;
+  duplicates: number;
+  canonicalWritten: number;
+  unknownAsset: number;
+  /** False when another instance already held the sweep lease. */
+  leaseAcquired: boolean;
+  /** When the lease frees up, if this sweep stood down. */
+  leaseNextAllowedAt: string | null;
+  /** Rows published to market_state — what readers will actually see. */
+  stateWritten: number;
   byTier: Record<Tier, number>;
   divergences: { contract: string; spreadPct: number }[];
   durationMs: number;
@@ -65,8 +78,15 @@ export async function ingestPrices(limit = 40): Promise<IngestionResult> {
     considered: 0,
     refreshed: 0,
     observations: 0,
-    written: 0,
-    skipped: 0,
+    eligible: 0,
+    fromCache: 0,
+    observationsWritten: 0,
+    duplicates: 0,
+    canonicalWritten: 0,
+    unknownAsset: 0,
+    leaseAcquired: false,
+    leaseNextAllowedAt: null,
+    stateWritten: 0,
     byTier: { ACTIVE: 0, HOT: 0, INDEXED: 0, DORMANT: 0 },
     divergences: [],
     durationMs: 0,
@@ -95,10 +115,46 @@ export async function ingestPrices(limit = 40): Promise<IngestionResult> {
   });
 
   if (!due.length) {
-    return { ...empty, considered: assets.length, byTier, durationMs: Date.now() - started };
+    return { ...empty, considered: assets.length, byTier, leaseAcquired: false, durationMs: Date.now() - started };
   }
 
-  const observations = await collectObservations(due);
+  /**
+   * Stand down if another instance is already sweeping.
+   *
+   * The in-memory schedule above is per-process; the quota is not. Without this
+   * lease, a preview deployment and production would each spend a full sweep
+   * against the same free allowance every minute.
+   *
+   * The hold is deliberately longer than a sweep takes. It expires on its own,
+   * so an instance that dies mid-sweep blocks the next one for a bounded time
+   * rather than forever.
+   */
+  const lease = await acquireLease("market-sweep", "*", 45_000, now);
+  if (!lease.acquired) {
+    return {
+      ...empty,
+      considered: assets.length,
+      byTier,
+      leaseAcquired: false,
+      leaseNextAllowedAt: lease.nextAllowedAt,
+      durationMs: Date.now() - started,
+    };
+  }
+
+  let observations: Awaited<ReturnType<typeof collectObservations>> = [];
+  try {
+    observations = await collectObservations(due);
+    await releaseLease("market-sweep", "*", "OK", Date.now());
+  } catch {
+    await releaseLease("market-sweep", "*", "ERROR", Date.now());
+    return {
+      ...empty,
+      considered: assets.length,
+      byTier,
+      leaseAcquired: true,
+      durationMs: Date.now() - started,
+    };
+  }
   for (const contract of due) lastRefresh.set(contract, now);
 
   const snapshots = reconcileAll(observations, now);
@@ -106,14 +162,34 @@ export async function ingestPrices(limit = 40): Promise<IngestionResult> {
     .filter((s) => s.divergence)
     .map((s) => ({ contract: s.contractAddress, spreadPct: s.divergence!.spreadPct }));
 
-  const { written, skipped } = await persistObservations(observations);
+  // Snapshots are passed in so the canonical series is written alongside the
+  // raw observations, from the same reconciliation that produced them.
+  const persisted = await persistObservations(observations, snapshots);
+
+  /**
+   * Publish the state readers will see.
+   *
+   * This is the only place market_state is written. Doing it here — after a
+   * real fetch, in the one process that owns the decision — is what allows
+   * every page and API route to read a price without touching the network.
+   */
+  const { data: assetRows } = await sb
+    .from("assets")
+    .select("id, contract_address")
+    .in("contract_address", [...snapshots.keys()]);
+  const idByAddress = new Map(
+    (assetRows ?? []).map((a) => [String(a.contract_address).toLowerCase(), a.id as string]),
+  );
+  const stateWritten = await writeMarketState(snapshots, idByAddress);
 
   return {
     considered: assets.length,
     refreshed: due.length,
     observations: observations.length,
-    written,
-    skipped,
+    ...persisted,
+    stateWritten,
+    leaseAcquired: true,
+    leaseNextAllowedAt: null,
     byTier,
     divergences,
     durationMs: Date.now() - started,

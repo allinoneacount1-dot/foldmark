@@ -74,10 +74,11 @@ function Inspector({ selection, onClose }: { selection: NonNullable<TopologySele
         <Row label="FROM" value={shortAddress(e.source, 8, 6)} mono />
         <Row label="TO" value={shortAddress(e.target, 8, 6)} mono />
         <Row label="ASSET" value={e.assetSymbol ?? "—"} />
-        <Row label="VALUE MOVED" value={compact(e.weight)} mono />
+        <Row label="AMOUNT" value={`${compact(e.weight)} ${e.assetSymbol ?? "UNITS"}`} mono />
         <Row label="TRANSFERS" value={integer(e.transfers)} mono />
         <p className="label-s px-4 py-3 normal-case tracking-[0.02em] text-ink-faint">
-          Value is the sum of observed transfer amounts along this edge, in token units.
+          Amount is the sum of observed transfer amounts along this edge, in {e.assetSymbol ?? "this asset&rsquo;s"}{" "}
+          units. Stroke weight encodes transfers, not amount, so edges in different assets stay comparable.
         </p>
       </div>
     );

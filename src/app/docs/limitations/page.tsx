@@ -44,10 +44,11 @@ export default function LimitationsPage() {
             ))}
           </div>
           <Note tone="warn">
-            The one that shapes the architecture most is the log window. The free public endpoint serves roughly 48
-            blocks of logs — about five seconds at this chain&apos;s 0.101s block time — against roughly 852,000 blocks a
+            The one that shapes the architecture most is the log window. The free public endpoint serves roughly 52
+            blocks of logs — about five seconds at this chain&apos;s 0.100s block time — against roughly 860,000 blocks a
             day. A scheduled job can therefore never catch up across a gap, which is why chain ingestion follows the
             head continuously rather than polling, and why an unreachable span is recorded as a gap rather than skipped.
+            Re-measured 2026-09-04 with <code className="font-mono text-ink">npm run probe:providers</code>.
           </Note>
         </DocSection>
 

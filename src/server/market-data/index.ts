@@ -1,10 +1,11 @@
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { CHAIN } from "@/config/site";
 import type { MarketPrice, MarketSnapshot } from "@/server/market-data/types";
 import { reconcileAll } from "@/server/market-data/reconcile";
 import * as geckoterminal from "@/server/market-data/providers/geckoterminal";
 import * as dexscreener from "@/server/market-data/providers/dexscreener";
 import { PROVIDERS } from "@/server/market-data/registry";
+import { readMarketState } from "@/server/market-data/state";
+import { isProviderEnabled } from "@/config/providers";
 
 /**
  * The market data facade.
@@ -14,9 +15,11 @@ import { PROVIDERS } from "@/server/market-data/registry";
  * response, so a provider can be replaced, throttled or removed without
  * touching a single component.
  *
- *   UI / API  ->  this module  ->  cache + budget  ->  provider  ->  Postgres
+ *   UI / API  ->  this module  ->  cache + budget  ->  provider
+ *   ingestion ->  this module  ->  reconcile  ->  persist  ->  Postgres
  *
- * Every call is server-side. A hundred readers produce one outbound request.
+ * Every call is server-side. A hundred readers produce one outbound request,
+ * and none of them writes a row.
  */
 
 /**
@@ -42,9 +45,11 @@ export async function collectObservations(addresses: string[]): Promise<MarketPr
 
   // Providers run concurrently and independently: one being rate limited or
   // down must never stop the others from answering.
+  // Two gates, not one: the provider must serve this chain (a probed fact) and
+  // this deployment must permit calling it (an owner's decision).
   const results = await Promise.allSettled([
-    PROVIDERS.geckoterminal.chainSupport === "SUPPORTED" ? geckoterminal.fetchTokenPrices(unique) : Promise.resolve([]),
-    PROVIDERS.dexscreener.chainSupport === "SUPPORTED" ? dexscreener.fetchTokenPrices(unique) : Promise.resolve([]),
+    isProviderEnabled("geckoterminal") ? geckoterminal.fetchTokenPrices(unique) : Promise.resolve([]),
+    isProviderEnabled("dexscreener") ? dexscreener.fetchTokenPrices(unique) : Promise.resolve([]),
   ]);
 
   const observations: MarketPrice[] = [];
@@ -53,22 +58,33 @@ export async function collectObservations(addresses: string[]): Promise<MarketPr
 }
 
 /**
- * Current market state for a set of contracts.
+ * Current market state for a set of contracts, for reading.
  *
- * Live observations are reconciled against each other and then persisted, so
- * today's quote becomes tomorrow's history. That accumulation is the point:
- * FOLDMARK should end up owning a dataset no provider can revoke.
+ * Reads stored state. It does not fetch, and that is the point: if rendering a
+ * page called a provider, the product's cost would scale with its audience and
+ * a free quota would last minutes. One scheduled process fetches; every reader
+ * selects what that process wrote.
+ *
+ * It also does not persist. A reader that writes is how duplicate history gets
+ * manufactured — the write path belongs to the ingestion pass, where a fetch
+ * genuinely happened and one process owns the decision.
+ *
+ * An asset with no stored row is absent from the map, and the interface renders
+ * a state for it. Nothing is invented to fill the gap.
  */
 export async function getMarketSnapshots(addresses: string[]): Promise<Map<string, MarketSnapshot>> {
+  return readMarketState(addresses);
+}
+
+/**
+ * Fetch, reconcile, and return current state — the ingestion path only.
+ *
+ * Named so that calling it from a page reads as obviously wrong. Every call
+ * here spends provider quota.
+ */
+export async function fetchAndReconcile(addresses: string[], now = Date.now()): Promise<Map<string, MarketSnapshot>> {
   const observations = await collectObservations(addresses);
-  const snapshots = reconcileAll(observations);
-
-  if (observations.length) {
-    // fire and forget: a storage problem must not fail a read
-    void persistObservations(observations).catch(() => {});
-  }
-
-  return snapshots;
+  return reconcileAll(observations, now);
 }
 
 export async function getMarketSnapshot(address: string): Promise<MarketSnapshot | null> {
@@ -76,61 +92,17 @@ export async function getMarketSnapshot(address: string): Promise<MarketSnapshot
   return snapshots.get(address.toLowerCase()) ?? null;
 }
 
-/* ------------------------------------------------------------ persistence */
-
-/**
- * Write observations to the price history.
- *
- * Resolves contract addresses to asset ids first: the `prices` table is keyed
- * by asset, and an observation for a contract the index has never seen is
- * dropped rather than orphaned.
- */
-export async function persistObservations(observations: MarketPrice[]): Promise<{ written: number; skipped: number }> {
-  if (!isSupabaseConfigured() || !supabase || !observations.length) {
-    return { written: 0, skipped: observations.length };
-  }
-  const sb = supabase;
-
-  const addresses = [...new Set(observations.map((o) => o.contractAddress))];
-  const { data: assets, error } = await sb
-    .from("assets")
-    .select("id, contract_address")
-    .in("contract_address", addresses);
-
-  if (error || !assets?.length) return { written: 0, skipped: observations.length };
-
-  const idByAddress = new Map(assets.map((a) => [String(a.contract_address).toLowerCase(), a.id as string]));
-
-  const rows = observations
-    .map((o) => {
-      const assetId = idByAddress.get(o.contractAddress);
-      if (!assetId) return null;
-      return {
-        asset_id: assetId,
-        price: o.price,
-        currency: o.currency,
-        source: `${o.source}:${o.priceType.toLowerCase()}`,
-        block_number: o.blockNumber,
-        observed_at: o.observedAt,
-      };
-    })
-    .filter((r): r is NonNullable<typeof r> => r !== null);
-
-  if (!rows.length) return { written: 0, skipped: observations.length };
-
-  const { error: insertError } = await sb.from("prices").insert(rows);
-  if (insertError) return { written: 0, skipped: observations.length };
-
-  return { written: rows.length, skipped: observations.length - rows.length };
-}
-
 /* ------------------------------------------------------------- attribution */
 
 /** Attribution required by the providers actually in use. */
 export function requiredAttribution(): string[] {
+  // Only providers actually called incur an attribution obligation.
   return Object.values(PROVIDERS)
-    .filter((p) => p.chainSupport === "SUPPORTED" && p.attribution)
+    .filter((p) => isProviderEnabled(p.id) && p.attribution)
     .map((p) => p.attribution!);
 }
 
+export { persistObservations } from "@/server/market-data/persist";
+
+export { readMarketState, writeMarketState } from "@/server/market-data/state";
 export const CHAIN_ID = CHAIN.id;

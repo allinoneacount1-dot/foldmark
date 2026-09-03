@@ -209,3 +209,28 @@ export function LoadingRows({ rows = 5, className = "" }: { rows?: number; class
     </div>
   );
 }
+
+/**
+ * The disclosure that keeps a window honest.
+ *
+ * A panel labelled 7D that draws on 40 minutes of index is making a claim it
+ * cannot support. This is where the product says so — inline, next to the
+ * figures, not buried in a methodology drawer — because the correction only
+ * works if it is read at the same moment as the number it qualifies.
+ *
+ * Renders nothing when coverage is complete: a notice that always appears stops
+ * being read.
+ */
+export function CoverageNote({ note, tone = "warn" }: { note: string | null; tone?: "warn" | "quiet" }) {
+  if (!note) return null;
+  return (
+    <p
+      role="note"
+      className={`label-s border-t px-4 py-2 normal-case tracking-[0.02em] ${
+        tone === "warn" ? "border-rule bg-raised text-ink-muted" : "border-rule-faint text-ink-faint"
+      }`}
+    >
+      {note}
+    </p>
+  );
+}

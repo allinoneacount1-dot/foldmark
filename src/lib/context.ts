@@ -13,6 +13,7 @@ import {
   getTransfersSince,
   foldByAsset,
   foldByAddress,
+  flowForAsset,
   since,
 } from "@/lib/queries";
 import { CHAIN, type FlowWindow } from "@/config/site";
@@ -64,12 +65,17 @@ export async function buildAssetContext(key: string, window: FlowWindow = "24H")
       state: "NOT APPLICABLE",
       reason: "Net flow is defined per address, not per token contract. See /api/v1/wallets/{address}.",
     },
-    top_counterparties: peers.map((p) => ({
-      address: p.address,
-      transfers: p.transfers,
-      received: Number(p.inbound.toFixed(6)),
-      sent: Number(p.outbound.toFixed(6)),
-    })),
+    // Scoped to one asset, so these amounts share a unit and mean something.
+    top_counterparties: peers.map((p) => {
+      const flow = flowForAsset(p, asset.id);
+      return {
+        address: p.address,
+        transfers: p.transfers,
+        received: flow ? Number(flow.inbound.toFixed(6)) : 0,
+        sent: flow ? Number(flow.outbound.toFixed(6)) : 0,
+        unit: asset.symbol,
+      };
+    }),
     markets: [],
     protocols: [],
     indexer: {
@@ -80,7 +86,7 @@ export async function buildAssetContext(key: string, window: FlowWindow = "24H")
     },
     sources: ["Robinhood Chain RPC (eth_getLogs, eth_getBlockByNumber)", "FOLDMARK indexer"],
     methodology:
-      "Activity is folded from ERC-20 Transfer logs stamped with block time. Gross volume sums transfer amounts in token units and is not a currency figure. Fields with a state instead of a value are not measured yet; FOLDMARK never substitutes an estimate.",
+      "Activity is folded from ERC-20 Transfer logs stamped with block time. Gross volume sums transfer amounts in this asset's own token units and is not a currency figure; amounts are never summed across assets, because token units are not comparable. Fields with a state instead of a value are not measured yet; FOLDMARK never substitutes an estimate.",
     generated_at: new Date().toISOString(),
   };
 }

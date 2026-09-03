@@ -21,6 +21,7 @@ import {
   getLatestPrices,
   foldByAsset,
   foldByAddress,
+  flowForAsset,
   foldEdges,
   since,
   requestNow,
@@ -261,28 +262,33 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
                 <h2 className="label mb-4 border-b border-rule pb-2.5 text-ink-muted">COUNTERPARTY LEDGER · 7D</h2>
                 <Ledger columns={cpColumns} caption={`Addresses that moved ${asset.symbol} in the last seven days`} minWidth={640}>
                   {counterparties.length ? (
-                    counterparties.map((c) => (
+                    counterparties.map((c) => {
+                      const flow = flowForAsset(c, asset.id);
+                      const inbound = flow?.inbound ?? 0;
+                      const outbound = flow?.outbound ?? 0;
+                      return (
                       <LedgerRow key={c.address} columns={cpColumns} href={`/wallet/${c.address}`}>
                         <LedgerCell column={cpColumns[0]}>
                           <span className="tabular font-mono text-data text-ink">{shortAddress(c.address, 10, 8)}</span>
                         </LedgerCell>
                         <LedgerCell column={cpColumns[1]}>
-                          <span className="label-s">{c.inbound >= c.outbound ? "NET RECEIVER" : "NET SENDER"}</span>
+                          <span className="label-s">{inbound >= outbound ? "NET RECEIVER" : "NET SENDER"}</span>
                         </LedgerCell>
                         <LedgerCell column={cpColumns[2]}>
                           <span className="tabular font-mono text-data-s text-ink">{integer(c.transfers)}</span>
                         </LedgerCell>
                         <LedgerCell column={cpColumns[3]}>
-                          <span className="tabular font-mono text-data-s text-ink">{compact(c.inbound)}</span>
+                          <span className="tabular font-mono text-data-s text-ink">{compact(inbound)}</span>
                         </LedgerCell>
                         <LedgerCell column={cpColumns[4]}>
-                          <span className="tabular font-mono text-data-s text-ink-muted">{compact(c.outbound)}</span>
+                          <span className="tabular font-mono text-data-s text-ink-muted">{compact(outbound)}</span>
                         </LedgerCell>
                         <LedgerCell column={cpColumns[5]}>
                           <span className="tabular font-mono text-data-s text-ink-muted">{integer(c.counterparties)}</span>
                         </LedgerCell>
                       </LedgerRow>
-                    ))
+                      );
+                    })
                   ) : (
                     <LedgerEmpty
                       state={window7d.state}

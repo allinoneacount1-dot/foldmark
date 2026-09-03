@@ -418,7 +418,27 @@ export const LIMITATIONS: { title: string; detail: string }[] = [
   {
     title: "Log history is about five seconds deep",
     detail:
-      "The free public endpoint serves eth_getLogs for roughly 48 blocks and refuses older ranges as archive requests. At 0.101s per block the chain produces about 852,000 blocks a day, so any gap in coverage is unrecoverable without a paid archive node. Gaps are counted and reported rather than skipped silently.",
+      "The free public endpoint serves eth_getLogs for roughly 52 blocks and refuses older ranges as archive requests. At 0.100s per block the chain produces about 860,000 blocks a day, so any gap in coverage is unrecoverable without a paid archive node. Gaps are counted and reported rather than skipped silently. Measured 2026-09-04.",
+  },
+  {
+    title: "Token amounts are never added across assets",
+    detail:
+      "One NVDA plus one AAPL plus one USDG is not three of anything. Any figure spanning several assets is therefore a count — transfers, counterparties, assets touched — or a USD notional conversion. Amounts appear only beside their own symbol, and cross-asset rankings use counts, which are comparable.",
+  },
+  {
+    title: "Notional value is partial, and says so",
+    detail:
+      "A USD total is only computed from assets FOLDMARK observed a price for within the last 15 minutes. Assets without one are excluded by name and the total is marked PARTIAL with its coverage stated. A stale quote is never carried forward to complete a sum.",
+  },
+  {
+    title: "An index window can be shorter than its label",
+    detail:
+      "A 7D panel drawn from forty minutes of index is not a 7D panel. Every windowed surface reads how far back the index reaches unbroken, and reports PARTIAL with the actual reach when it cannot span its own period. The figure is then a lower bound over that shorter span.",
+  },
+  {
+    title: "DEX Screener is off unless a deployment enables it",
+    detail:
+      "Their terms restrict redistribution and products that compete with their screener, which is a question about the business rather than the chain. The provider is probed as supporting Robinhood Chain and is still not called unless DEXSCREENER_ENABLED is set. The provider status endpoint reports chain support and enablement as separate facts.",
   },
   {
     title: "Continuous ingestion needs a process, not a cron",

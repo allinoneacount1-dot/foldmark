@@ -3,7 +3,14 @@ import { Shell, Split, PageHead } from "@/components/layout/Frame";
 import { Panel, PanelHeader, EmptyState, StateTag } from "@/components/ui/primitives";
 import { Ledger, LedgerRow, LedgerCell, LedgerEmpty, type LedgerColumn } from "@/components/ui/Ledger";
 import { AddressLookup } from "@/components/forms/AddressLookup";
-import { getAssets, getWindowActivity, getObservedWallets, foldByAddress, countRows, requestNow,
+import {
+  getAssets,
+  getWindowActivity,
+  getObservedWallets,
+  foldByAddress,
+  dominantFlow,
+  countRows,
+  requestNow,
 } from "@/lib/queries";
 import { compact, integer, relativeTime, shortAddress } from "@/lib/format";
 import { CHAIN } from "@/config/site";
@@ -15,13 +22,19 @@ export const metadata: Metadata = {
 
 export const revalidate = 30;
 
+/**
+ * This table spans every asset, so it carries no RECEIVED / SENT column.
+ *
+ * A received figure summed over NVDA, AAPL and USDG has no unit and no meaning.
+ * What is comparable across assets is counted: transfers, assets touched,
+ * counterparties. The one amount shown is scoped to a single named asset.
+ */
 const COLUMNS: LedgerColumn[] = [
   { key: "addr", label: "ADDRESS", width: "minmax(170px, 1.6fr)" },
-  { key: "dir", label: "POSTURE", width: "minmax(110px, 0.8fr)" },
   { key: "tx", label: "TRANSFERS", width: "minmax(90px, 0.7fr)", align: "right" },
-  { key: "in", label: "RECEIVED", width: "minmax(100px, 0.8fr)", align: "right" },
-  { key: "out", label: "SENT", width: "minmax(100px, 0.8fr)", align: "right", hideBelow: "sm" },
-  { key: "peers", label: "COUNTERPARTIES", width: "minmax(110px, 0.8fr)", align: "right", hideBelow: "md" },
+  { key: "assets", label: "ASSETS", width: "minmax(80px, 0.6fr)", align: "right" },
+  { key: "peers", label: "COUNTERPARTIES", width: "minmax(110px, 0.8fr)", align: "right" },
+  { key: "main", label: "LARGEST FLOW", width: "minmax(140px, 1fr)", align: "right", hideBelow: "sm" },
 ];
 
 export default async function WalletsPage() {
@@ -34,6 +47,7 @@ export default async function WalletsPage() {
   ]);
 
   const active = foldByAddress(activity.rows, assetsResult.rows, 20);
+  const symbols = new Map(assetsResult.rows.map((a) => [a.id, a.symbol]));
 
   return (
     <Shell>
@@ -61,30 +75,42 @@ export default async function WalletsPage() {
             left={
               <>
                 <h2 className="label mb-4 border-b border-rule pb-2.5 text-ink-muted">MOST ACTIVE · 24H</h2>
-                <Ledger columns={COLUMNS} caption="Addresses ranked by value moved in the last 24 hours" minWidth={720}>
+                <Ledger
+                  columns={COLUMNS}
+                  caption="Addresses ranked by transfers observed in the last 24 hours"
+                  minWidth={720}
+                >
                   {active.length ? (
-                    active.map((a) => (
+                    active.map((a) => {
+                      const largest = dominantFlow(a, "inbound") ?? dominantFlow(a, "outbound");
+                      const largestSymbol = largest ? (symbols.get(largest.assetId) ?? null) : null;
+                      return (
                       <LedgerRow key={a.address} columns={COLUMNS} href={`/wallet/${a.address}`}>
                         <LedgerCell column={COLUMNS[0]}>
                           <span className="tabular font-mono text-data text-ink">{shortAddress(a.address, 12, 8)}</span>
                         </LedgerCell>
                         <LedgerCell column={COLUMNS[1]}>
-                          <span className="label-s">{a.inbound >= a.outbound ? "ACCUMULATING" : "DISTRIBUTING"}</span>
-                        </LedgerCell>
-                        <LedgerCell column={COLUMNS[2]}>
                           <span className="tabular font-mono text-data-s text-ink">{integer(a.transfers)}</span>
                         </LedgerCell>
+                        <LedgerCell column={COLUMNS[2]}>
+                          <span className="tabular font-mono text-data-s text-ink-muted">{integer(a.assets)}</span>
+                        </LedgerCell>
                         <LedgerCell column={COLUMNS[3]}>
-                          <span className="tabular font-mono text-data-s text-signal">{compact(a.inbound)}</span>
-                        </LedgerCell>
-                        <LedgerCell column={COLUMNS[4]}>
-                          <span className="tabular font-mono text-data-s text-ink-muted">{compact(a.outbound)}</span>
-                        </LedgerCell>
-                        <LedgerCell column={COLUMNS[5]}>
                           <span className="tabular font-mono text-data-s text-ink-muted">{integer(a.counterparties)}</span>
                         </LedgerCell>
+                        <LedgerCell column={COLUMNS[4]}>
+                          {largest ? (
+                            <span className="tabular font-mono text-data-s text-signal">
+                              {compact(Math.max(largest.inbound, largest.outbound))}{" "}
+                              <span className="text-ink-faint">{largestSymbol ?? "UNKNOWN"}</span>
+                            </span>
+                          ) : (
+                            <span className="label-s text-ink-faint">—</span>
+                          )}
+                        </LedgerCell>
                       </LedgerRow>
-                    ))
+                      );
+                    })
                   ) : (
                     <LedgerEmpty
                       state={activity.state}
@@ -94,8 +120,10 @@ export default async function WalletsPage() {
                   )}
                 </Ledger>
                 <p className="label-s mt-3 normal-case tracking-[0.02em] text-ink-faint">
-                  POSTURE compares value received against value sent inside the window. It is a description of observed
-                  movement, not a claim about intent or about balances held.
+                  Ranked by transfers observed, which is comparable across assets. LARGEST FLOW names one asset and
+                  quotes the amount in that asset&rsquo;s units — amounts are never added together across assets. Open
+                  an address to see received against sent per asset. Nothing here is a claim about intent or balances
+                  held.
                 </p>
               </>
             }
@@ -137,8 +165,8 @@ export default async function WalletsPage() {
                   <ul className="flex flex-col">
                     {[
                       ["ASSET EXPOSURE", "Net movement per asset across the window, from transfer logs."],
-                      ["COUNTERPARTIES", "Every address this one traded against, ranked by value."],
-                      ["CAPITAL MOVEMENT", "Received against sent, with the net."],
+                      ["COUNTERPARTIES", "Every address this one traded against, ranked by transfers."],
+                      ["CAPITAL MOVEMENT", "Received against sent per asset, with the net in that asset's units."],
                       ["ACTIVITY TIMELINE", "Transfers bucketed over the window."],
                       ["RELATIONSHIP GRAPH", "The address at the centre of its observed neighbourhood."],
                     ].map(([k, v]) => (

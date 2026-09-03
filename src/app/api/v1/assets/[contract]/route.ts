@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
-import { getAssetByAddress, getTransfersSince, getLatestPrices, foldByAsset, foldByAddress, since } from "@/lib/queries";
+import {
+  getAssetByAddress,
+  getTransfersSince,
+  getLatestPrices,
+  foldByAsset,
+  foldByAddress,
+  flowForAsset,
+  since,
+} from "@/lib/queries";
 import { WINDOWS, CHAIN, type FlowWindow } from "@/config/site";
 
 export const dynamic = "force-dynamic";
@@ -61,12 +69,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ contract
       : { state: "DATA UNAVAILABLE", reason: `No price oracle is wired to chain ${CHAIN.id}` },
     liquidity: { state: "DATA UNAVAILABLE", reason: "No DEX pool identified on this chain" },
     holders: { state: "DATA UNAVAILABLE", reason: "Holder counts require balance reconstruction over the full history" },
-    top_counterparties: peers.map((p) => ({
-      address: p.address,
-      received: Number(p.inbound.toFixed(6)),
-      sent: Number(p.outbound.toFixed(6)),
-      transfers: p.transfers,
-    })),
+    // Amounts are in this asset's units, which is the only scope where a token
+    // amount means anything.
+    top_counterparties: peers.map((p) => {
+      const flow = flowForAsset(p, asset.id);
+      return {
+        address: p.address,
+        received: flow ? Number(flow.inbound.toFixed(6)) : 0,
+        sent: flow ? Number(flow.outbound.toFixed(6)) : 0,
+        unit: asset.symbol,
+        transfers: p.transfers,
+      };
+    }),
     updated_at: new Date().toISOString(),
     methodology:
       "Gross volume sums transfer amounts in token units inside the window. Counterparties counts distinct addresses appearing as sender or recipient; it is not a holder count. No asset-level net flow is published: a transfer moves balance between holders without changing supply.",

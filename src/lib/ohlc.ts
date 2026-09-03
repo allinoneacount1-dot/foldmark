@@ -40,8 +40,22 @@ function bucketStart(ms: number, interval: Interval): number {
   return Math.floor(ms / size) * size;
 }
 
+/**
+ * Whether an interval is one we can actually bucket by.
+ *
+ * Without this check an unrecognised interval makes `INTERVAL_MS[interval]`
+ * undefined, every timestamp divides to NaN, and every observation lands in the
+ * same NaN bucket — producing exactly one candle, timestamped NaN, whose high
+ * and low span the entire dataset. That candle looks like a real one to
+ * everything downstream while describing no period at all. An interval we
+ * cannot bucket must yield no candles rather than one fabricated one.
+ */
+function isInterval(interval: string): interval is Interval {
+  return Object.prototype.hasOwnProperty.call(INTERVAL_MS, interval);
+}
+
 export function aggregateCandles(observations: PriceObservationInput[], interval: Interval): Candle[] {
-  if (!observations.length) return [];
+  if (!observations.length || !isInterval(interval)) return [];
 
   // ascending by observation time, so "first" and "last" are unambiguous
   const sorted = [...observations].sort((a, b) => new Date(a.observedAt).getTime() - new Date(b.observedAt).getTime());
@@ -65,7 +79,7 @@ export function aggregateCandles(observations: PriceObservationInput[], interval
 }
 
 export function aggregateVolume(inputs: VolumeInput[], interval: Interval): VolumeBar[] {
-  if (!inputs.length) return [];
+  if (!inputs.length || !isInterval(interval)) return [];
   const byBucket = new Map<number, VolumeBar>();
   for (const v of inputs) {
     const t = new Date(v.at).getTime();

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Shell, Split, RailColumn, PageHead } from "@/components/layout/Frame";
 import { Tape, TapeCell, TapeStatic } from "@/components/ui/Tape";
 import { Figure } from "@/components/ui/Figure";
-import { Panel, PanelHeader, EmptyState, Methodology, StateTag } from "@/components/ui/primitives";
+import { Panel, PanelHeader, EmptyState, Methodology, StateTag, CoverageNote } from "@/components/ui/primitives";
 import { ChipLink, ChipGroup } from "@/components/ui/controls";
 import { MarketChart } from "@/components/charts/MarketChart";
 import { TopologyView } from "@/components/graph/TopologyView";
@@ -97,6 +97,12 @@ export default async function DashboardPage({
               </ChipGroup>
             }
           />
+
+          {activity.coverageNote ? (
+            <div className="mt-6 border border-rule">
+              <CoverageNote note={activity.coverageNote} />
+            </div>
+          ) : null}
         </div>
       </Shell>
 

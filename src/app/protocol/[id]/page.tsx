@@ -8,7 +8,7 @@ import { TopologyView } from "@/components/graph/TopologyView";
 import { getProtocols, getContracts, getAssets, getWindowActivity, foldByAddress, requestNow,
 } from "@/lib/queries";
 import { buildMarketGraph } from "@/lib/graph";
-import { compact, integer, shortAddress } from "@/lib/format";
+import { integer, shortAddress } from "@/lib/format";
 import { CHAIN } from "@/config/site";
 
 export const revalidate = 60;
@@ -135,8 +135,9 @@ export default async function ProtocolPage({ params }: { params: Promise<{ id: s
                             <span className="tabular truncate font-mono text-data-s text-ink">
                               {shortAddress(p.address, 10, 6)}
                             </span>
+                            {/* A protocol touches many assets, so this counts rather than sums. */}
                             <span className="tabular shrink-0 font-mono text-data-s text-ink-muted">
-                              {compact(p.inbound + p.outbound)}
+                              {integer(p.transfers)} TX
                             </span>
                           </a>
                         </li>

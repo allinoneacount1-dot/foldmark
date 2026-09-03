@@ -46,7 +46,7 @@ export type GraphEdge = {
   id: string;
   source: string;
   target: string;
-  /** Value moved along this edge, in units of the asset it belongs to. */
+  /** Amount moved along this edge, in units of the asset it belongs to. Never comparable to another edge's weight unless both name the same asset. */
   weight: number;
   transfers: number;
   assetId: string | null;
@@ -184,7 +184,7 @@ export function buildMarketGraph(
     nodes.push(addressNode(addr, acc, "destination", 0.92, spread(i, receivers.length), maxAddressValue, headBlock));
   });
 
-  // ---- edges: address -> asset, weighted by value moved -------------------
+  // ---- edges: address -> asset, drawn by transfer count -------------------
   const edgeAcc = new Map<string, { weight: number; transfers: number; assetId: string; lastBlock: number }>();
   for (const t of rows) {
     if (!t.asset_id || !shownAssets.has(t.asset_id)) continue;
@@ -210,8 +210,21 @@ export function buildMarketGraph(
     }
   }
 
-  const rankedEdges = [...edgeAcc.entries()].sort((a, b) => b[1].weight - a[1].weight).slice(0, MAX_EDGES);
-  const maxEdge = Math.max(...rankedEdges.map(([, e]) => e.weight), 1);
+  /**
+   * Ranked and drawn by transfer count, not by amount.
+   *
+   * The graph puts edges in several different assets on one canvas, and a
+   * stroke's thickness is read as importance. Scaling that from token amounts
+   * would make a stablecoin edge overwhelm an equity edge purely because its
+   * denomination is smaller — a visual claim about the market that comes from
+   * decimals, not from behaviour. Transfers are comparable between assets, so
+   * transfers are what the drawing encodes. Each edge still carries its own
+   * amount, in its own units, for the inspector to show.
+   */
+  const rankedEdges = [...edgeAcc.entries()]
+    .sort((a, b) => b[1].transfers - a[1].transfers || b[1].weight - a[1].weight)
+    .slice(0, MAX_EDGES);
+  const maxEdge = Math.max(...rankedEdges.map(([, e]) => e.transfers), 1);
 
   const edges: GraphEdge[] = rankedEdges.map(([key, e]) => {
     const [source, target] = key.split("->");
@@ -223,7 +236,7 @@ export function buildMarketGraph(
       transfers: e.transfers,
       assetId: e.assetId,
       assetSymbol: assetById.get(e.assetId)?.symbol ?? null,
-      intensity: clamp(Math.sqrt(e.weight / maxEdge)),
+      intensity: clamp(Math.sqrt(e.transfers / maxEdge)),
       fresh: headBlock > 0 && e.lastBlock === headBlock,
     };
   });
