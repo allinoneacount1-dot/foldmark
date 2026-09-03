@@ -1,73 +1,261 @@
 @import "tailwindcss";
 
+/* ==========================================================================
+   FOLDMARK design tokens
+   Institutional cyber-editorial. Every surface, hairline, type step and
+   duration used in the product comes from this file. Components do not invent
+   values.
+   ========================================================================== */
+
 @theme {
-  --color-loom-black: #080A08;
-  --color-carbon: #10130F;
-  --color-graphite: #181C17;
-  --color-paper: #F2F0E8;
-  --color-ash: #949A91;
-  --color-signal: #C7FF4A;
-  --color-signal-dim: #A3D93A;
-  --color-danger: #E85D4E;
-  --font-display: "Instrument Serif", Georgia, serif;
-  --font-ui: "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", "IBM Plex Mono", ui-monospace, monospace;
+  /* --- surfaces: four steps, near-black to raised ------------------------ */
+  --color-void: #080a08; /* page ground */
+  --color-surface: #10130f; /* panels, table headers */
+  --color-raised: #151914; /* inspectors, active rows */
+  --color-elevated: #181c17; /* menus, overlays */
+
+  /* --- ink -------------------------------------------------------------- */
+  --color-ink: #f2f0e8; /* primary, warm off-white */
+  --color-ink-muted: #a8ada4; /* secondary — passes AA on --color-void */
+  --color-ink-dim: #7e857c; /* tertiary, labels only */
+  --color-ink-faint: #5c6259; /* dividing text, never body copy */
+
+  /* --- signal ----------------------------------------------------------- */
+  --color-signal: #c7ff4a; /* the accent. scarce by policy. */
+  --color-signal-dim: #9bc23a;
+  --color-negative: #e8785d; /* outflow / error */
+  --color-positive: #c7ff4a; /* inflow — same token as signal, by design */
+
+  /* --- hairlines -------------------------------------------------------- */
+  --color-rule: rgba(242, 240, 232, 0.08); /* default divider */
+  --color-rule-strong: rgba(242, 240, 232, 0.16); /* focused / active edge */
+  --color-rule-faint: rgba(242, 240, 232, 0.05); /* inner grid lines */
+
+  /* --- type ------------------------------------------------------------- */
+  --font-display: var(--font-jost), "Jost", ui-sans-serif, system-ui, sans-serif;
+  --font-ui: var(--font-geist), "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), "IBM Plex Mono", ui-monospace, monospace;
+
+  /* display — editorial statements */
+  --text-display-xl: 4.25rem;
+  --text-display-xl--line-height: 0.92;
+  --text-display-xl--letter-spacing: -0.03em;
+  --text-display-l: 2.75rem;
+  --text-display-l--line-height: 0.95;
+  --text-display-l--letter-spacing: -0.025em;
+  --text-display-m: 1.875rem;
+  --text-display-m--line-height: 1;
+  --text-display-m--letter-spacing: -0.02em;
+
+  /* interface — reading */
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.6;
+  --text-body-s: 0.8125rem;
+  --text-body-s--line-height: 1.55;
+
+  /* data — monospace, tabular */
+  --text-data-l: 1.25rem;
+  --text-data-l--line-height: 1.1;
+  --text-data: 0.8125rem;
+  --text-data--line-height: 1.35;
+  --text-data-s: 0.75rem;
+  --text-data-s--line-height: 1.35;
+
+  /* label — the only uppercase tier */
+  --text-label: 0.6875rem;
+  --text-label--line-height: 1.2;
+  --text-label--letter-spacing: 0.16em;
+  --text-label-s: 0.625rem;
+  --text-label-s--line-height: 1.2;
+  --text-label-s--letter-spacing: 0.18em;
+
+  /* --- radius: institutional, effectively square ------------------------ */
+  --radius-none: 0px;
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+
+  /* --- layout ----------------------------------------------------------- */
+  --width-shell: 97.5rem; /* 1560px — the single gutter box */
+  --width-rail: 22rem; /* 352px — the intelligence rail, defined once */
+  --width-measure: 58ch;
+  --gutter: 1.5rem;
+  --gutter-sm: 1rem;
+  --canvas-min-h: 34rem;
+
+  /* --- rhythm: these three values are the pacing ------------------------- */
+  --space-quiet: 6rem; /* editorial bands */
+  --space-dense: 2.5rem; /* data bands */
+  --space-signature: 4rem; /* the topology band */
+
+  /* --- motion ----------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-micro: 180ms;
+  --duration-panel: 320ms;
+  --duration-section: 520ms;
 }
 
+/* ==========================================================================
+   base
+   ========================================================================== */
+
 :root {
-  --background: #080A08;
-  --foreground: #F2F0E8;
+  color-scheme: dark;
+  --nav-height: 56px;
+}
+
+html {
+  background: var(--color-void);
+  scroll-behavior: auto;
+}
+
+body {
+  background: var(--color-void);
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+*,
+*::before,
+*::after {
+  border-color: var(--color-rule);
+}
+
+::selection {
+  background: var(--color-signal);
+  color: var(--color-void);
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #181C17 transparent;
+  scrollbar-color: var(--color-elevated) transparent;
 }
 
-html {
-  scroll-behavior: smooth;
-  background: #080A08;
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-elevated);
+  border: 3px solid var(--color-void);
 }
 
-body {
-  background: #080A08;
-  color: #F2F0E8;
-  font-family: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  overflow-x: hidden;
+/* ==========================================================================
+   focus — visible on every surface including the accent
+   ========================================================================== */
+
+:focus-visible {
+  outline: 2px solid var(--color-signal);
+  outline-offset: 2px;
+  border-radius: 1px;
 }
 
-::selection {
-  background: #C7FF4A;
-  color: #080A08;
+.on-signal:focus-visible {
+  outline-color: var(--color-void);
 }
 
-/* tabular numbers for data */
+.skip-link {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 100;
+  transform: translateY(-120%);
+  background: var(--color-signal);
+  color: var(--color-void);
+  padding: 0.625rem 1rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: 0.16em;
+  transition: transform var(--duration-micro) var(--ease-out);
+}
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+/* ==========================================================================
+   utilities
+   ========================================================================== */
+
 .tabular {
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
-/* thin rails */
-.rail {
-  border-color: rgba(242, 240, 232, 0.08);
+/* The label tier. Uppercase lives here and nowhere else. */
+.label {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  line-height: 1.2;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-ink-dim);
 }
 
-/* signal scarcity */
-.signal {
-  color: #C7FF4A;
+.label-s {
+  font-family: var(--font-mono);
+  font-size: var(--text-label-s);
+  line-height: 1.2;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-ink-dim);
 }
 
-/* focus */
-:focus-visible {
-  outline: 1px solid #C7FF4A;
-  outline-offset: 2px;
+/* Rhythm. A band declares its pacing; it never types a py-* value, which is
+   how six sections ended up at identical vertical rhythm. */
+.band-quiet {
+  padding-block: var(--space-quiet);
+}
+.band-dense {
+  padding-block: var(--space-dense);
+}
+.band-signature {
+  padding-block: var(--space-signature);
 }
 
-/* motion defaults */
+/* The one gutter box. Replaces every hand-typed mx-auto max-w-[…] px-4 md:px-6. */
+.shell {
+  margin-inline: auto;
+  width: 100%;
+  max-width: var(--width-shell);
+  padding-inline: var(--gutter-sm);
+}
+
+@media (min-width: 768px) {
+  .shell {
+    padding-inline: var(--gutter);
+  }
+}
+
+.measure {
+  max-width: var(--width-measure);
+}
+
+/* Hairline grid: the structural primitive. Rails and matrices are built from
+   1px rules, not from bordered cards. */
+.rule-t {
+  border-top: 1px solid var(--color-rule);
+}
+.rule-b {
+  border-bottom: 1px solid var(--color-rule);
+}
+.rule-l {
+  border-left: 1px solid var(--color-rule);
+}
+.rule-r {
+  border-right: 1px solid var(--color-rule);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

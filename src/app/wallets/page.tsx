@@ -1,53 +1,162 @@
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import type { Metadata } from "next";
+import { Shell, Split, PageHead } from "@/components/layout/Frame";
+import { Panel, PanelHeader, EmptyState, StateTag } from "@/components/ui/primitives";
+import { Ledger, LedgerRow, LedgerCell, LedgerEmpty, type LedgerColumn } from "@/components/ui/Ledger";
+import { AddressLookup } from "@/components/forms/AddressLookup";
+import { getAssets, getWindowActivity, getObservedWallets, foldByAddress, countRows, requestNow,
+} from "@/lib/queries";
+import { compact, integer, relativeTime, shortAddress } from "@/lib/format";
+import { CHAIN } from "@/config/site";
+
+export const metadata: Metadata = {
+  title: "Wallet explorer",
+  description: "Inspect any public Robinhood Chain address: exposure, counterparties, capital movement and activity.",
+};
+
+export const revalidate = 30;
+
+const COLUMNS: LedgerColumn[] = [
+  { key: "addr", label: "ADDRESS", width: "minmax(170px, 1.6fr)" },
+  { key: "dir", label: "POSTURE", width: "minmax(110px, 0.8fr)" },
+  { key: "tx", label: "TRANSFERS", width: "minmax(90px, 0.7fr)", align: "right" },
+  { key: "in", label: "RECEIVED", width: "minmax(100px, 0.8fr)", align: "right" },
+  { key: "out", label: "SENT", width: "minmax(100px, 0.8fr)", align: "right", hideBelow: "sm" },
+  { key: "peers", label: "COUNTERPARTIES", width: "minmax(110px, 0.8fr)", align: "right", hideBelow: "md" },
+];
 
 export default async function WalletsPage() {
-  let wallets: any[] = [];
-  if (isSupabaseConfigured() && supabase) {
-    const { data } = await supabase.from("wallets").select("address").limit(8);
-    if (data) wallets = data;
-    // if empty, fallback to distinct from transfers
-    if (!wallets.length) {
-      const { data: t } = await supabase.from("transfers").select("from_address, to_address").limit(20);
-      const set = new Set<string>();
-      t?.forEach((r: any) => { set.add(r.from_address); set.add(r.to_address); });
-      wallets = [...set].slice(0,8).map(a=>({ address: a }));
-    }
-  }
+  const now = await requestNow();
+  const [assetsResult, activity, observed, walletCount] = await Promise.all([
+    getAssets(),
+    getWindowActivity("24H", now),
+    getObservedWallets(40),
+    countRows("wallets"),
+  ]);
+
+  const active = foldByAddress(activity.rows, assetsResult.rows, 20);
 
   return (
-    <main className="mx-auto max-w-[1600px] px-4 md:px-6 py-8">
-      <div className="font-mono text-[10px] tracking-[0.2em] text-white/40">WALLET INTELLIGENCE — {wallets.length ? `${wallets.length} OBSERVED` : "INDEXING"}</div>
-      <h1 className="mt-2 font-serif text-[28px] md:text-[36px] tracking-[-0.03em]">WALLETS</h1>
-      <div className="mt-6 max-w-[640px] flex gap-2">
-        <input placeholder="0x… — paste Robinhood Chain address" className="flex-1 border border-white/15 bg-white/[0.04] px-4 py-3 font-mono text-[13px] placeholder:text-white/30 focus:outline-none focus:border-[#C7FF4A]" />
-        <button className="bg-[#F2F0E8] text-[#080A08] px-5 font-mono text-[11px] tracking-[0.14em]">INSPECT</button>
-      </div>
-      {wallets.length ? (
-        <div className="mt-6 border border-white/[0.07] bg-[#10130F] p-4">
-          <div className="font-mono text-[11px] tracking-[0.16em]">RECENTLY OBSERVED — FROM TRANSFER LOGS</div>
-          <div className="mt-3 grid md:grid-cols-2 gap-2 font-mono text-[11px]">
-            {wallets.map((w: any) => (
-              <a key={w.address} href={`/wallet/${w.address}`} className="border border-white/10 bg-[#080A08] px-3 py-2.5 flex justify-between hover:bg-white/[0.04]">
-                <span className="text-white/70 truncate">{w.address.slice(0,6)}…{w.address.slice(-4)}</span>
-                <span className="text-[#C7FF4A]">→</span>
-              </a>
-            ))}
-          </div>
-          <div className="mt-3 font-mono text-[10px] text-white/30">Click to inspect exposure — portfolio & counterparties from indexed transfers.</div>
+    <Shell>
+      <div className="band-dense">
+        <PageHead
+          kicker={`WALLET INTELLIGENCE · CHAIN ${CHAIN.id}`}
+          title="Read any address as a position"
+          lede="Paste a public address to see what it holds exposure to, who it trades against and how value has moved through it. No connection and no signature required."
+          aside={
+            <StateTag
+              state={walletCount.state}
+              label={walletCount.value !== null ? `${integer(walletCount.value)} OBSERVED` : undefined}
+            />
+          }
+        />
+
+        <div className="mt-6">
+          <AddressLookup />
         </div>
-      ) : (
-        <div className="mt-8 border border-white/[0.07] bg-[#10130F] p-6 grid place-items-center py-16">
-          <div className="text-center">
-            <div className="font-mono text-[11px] tracking-[0.16em] text-white/40">NO WALLET SELECTED</div>
-            <div className="mt-2 font-mono text-[13px] text-white/60">Enter an address to see portfolio, exposure, activity, counterparty graph.</div>
-          </div>
+
+        <div className="mt-8">
+          <Split
+            ratio="8:4"
+            gap="gap-6"
+            left={
+              <>
+                <h2 className="label mb-4 border-b border-rule pb-2.5 text-ink-muted">MOST ACTIVE · 24H</h2>
+                <Ledger columns={COLUMNS} caption="Addresses ranked by value moved in the last 24 hours" minWidth={720}>
+                  {active.length ? (
+                    active.map((a) => (
+                      <LedgerRow key={a.address} columns={COLUMNS} href={`/wallet/${a.address}`}>
+                        <LedgerCell column={COLUMNS[0]}>
+                          <span className="tabular font-mono text-data text-ink">{shortAddress(a.address, 12, 8)}</span>
+                        </LedgerCell>
+                        <LedgerCell column={COLUMNS[1]}>
+                          <span className="label-s">{a.inbound >= a.outbound ? "ACCUMULATING" : "DISTRIBUTING"}</span>
+                        </LedgerCell>
+                        <LedgerCell column={COLUMNS[2]}>
+                          <span className="tabular font-mono text-data-s text-ink">{integer(a.transfers)}</span>
+                        </LedgerCell>
+                        <LedgerCell column={COLUMNS[3]}>
+                          <span className="tabular font-mono text-data-s text-signal">{compact(a.inbound)}</span>
+                        </LedgerCell>
+                        <LedgerCell column={COLUMNS[4]}>
+                          <span className="tabular font-mono text-data-s text-ink-muted">{compact(a.outbound)}</span>
+                        </LedgerCell>
+                        <LedgerCell column={COLUMNS[5]}>
+                          <span className="tabular font-mono text-data-s text-ink-muted">{integer(a.counterparties)}</span>
+                        </LedgerCell>
+                      </LedgerRow>
+                    ))
+                  ) : (
+                    <LedgerEmpty
+                      state={activity.state}
+                      title="No address active in the last 24 hours"
+                      detail="Addresses appear here as soon as the indexer observes a transfer involving them."
+                    />
+                  )}
+                </Ledger>
+                <p className="label-s mt-3 normal-case tracking-[0.02em] text-ink-faint">
+                  POSTURE compares value received against value sent inside the window. It is a description of observed
+                  movement, not a claim about intent or about balances held.
+                </p>
+              </>
+            }
+            right={
+              <div className="flex flex-col gap-6">
+                <Panel>
+                  <PanelHeader
+                    title="RECENTLY SEEN"
+                    meta="BY LAST ACTIVITY"
+                    state={observed.rows.length ? observed.state : "INDEXING"}
+                  />
+                  {observed.rows.length ? (
+                    <ul className="max-h-[22rem] overflow-y-auto">
+                      {observed.rows.map((w) => (
+                        <li key={w.address}>
+                          <a
+                            href={`/wallet/${w.address}`}
+                            className="flex items-baseline justify-between gap-3 border-b border-rule-faint px-4 py-2.5 transition-colors duration-[180ms] last:border-b-0 hover:bg-raised"
+                          >
+                            <span className="tabular truncate font-mono text-data-s text-ink">
+                              {shortAddress(w.address, 10, 6)}
+                            </span>
+                            <span className="label-s shrink-0 text-ink-faint">{relativeTime(w.last_seen, now)}</span>
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <EmptyState
+                      state={observed.state}
+                      title="No wallet observed yet"
+                      detail="The wallet table is populated by the indexer from transfer participants."
+                    />
+                  )}
+                </Panel>
+
+                <Panel>
+                  <PanelHeader title="WHAT A WALLET PAGE SHOWS" />
+                  <ul className="flex flex-col">
+                    {[
+                      ["ASSET EXPOSURE", "Net movement per asset across the window, from transfer logs."],
+                      ["COUNTERPARTIES", "Every address this one traded against, ranked by value."],
+                      ["CAPITAL MOVEMENT", "Received against sent, with the net."],
+                      ["ACTIVITY TIMELINE", "Transfers bucketed over the window."],
+                      ["RELATIONSHIP GRAPH", "The address at the centre of its observed neighbourhood."],
+                    ].map(([k, v]) => (
+                      <li key={k} className="flex flex-col gap-0.5 border-b border-rule-faint px-4 py-2.5 last:border-b-0">
+                        <span className="label-s text-ink-muted">{k}</span>
+                        <span className="text-body-s text-ink-faint">{v}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
+                    Portfolio value in a currency is withheld: no price oracle is wired to chain {CHAIN.id}.
+                  </p>
+                </Panel>
+              </div>
+            }
+          />
         </div>
-      )}
-      <div className="mt-6 grid md:grid-cols-3 gap-4 font-mono text-[11px]">
-        <div className="border border-white/10 bg-[#080A08] p-4"><div className="text-white/40">OBSERVED WALLETS</div><div className="mt-2 text-white/60">{wallets.length || "—"}</div></div>
-        <div className="border border-white/10 bg-[#080A08] p-4"><div className="text-white/40">INDEXER</div><div className="mt-2 text-[#C7FF4A]">LIVE • LOCAL CRON 2m</div></div>
-        <div className="border border-white/10 bg-[#080A08] p-4"><div className="text-white/40">SOURCE</div><div className="mt-2 text-white/30">Transfers → wallets</div></div>
       </div>
-    </main>
+    </Shell>
   );
 }

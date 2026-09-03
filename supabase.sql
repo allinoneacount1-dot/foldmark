@@ -130,11 +130,8 @@ insert into data_sources (id, name, source_type) values
   ('blockscout','Blockscout','explorer')
 on conflict (id) do nothing;
 
--- seed canonical Stock Tokens (verified) — contracts are placeholders until registry fetch live
-insert into assets (chain_id, contract_address, symbol, name, asset_type, verified, source, decimals) values
-  (4663, '0x0000000000000000000000000000000000000001', 'NVDA', 'NVIDIA', 'stock_token', true, 'Robinhood Registry', 18),
-  (4663, '0x0000000000000000000000000000000000000002', 'AAPL', 'Apple', 'stock_token', true, 'Robinhood Registry', 18),
-  (4663, '0x0000000000000000000000000000000000000003', 'TSLA', 'Tesla', 'stock_token', true, 'Robinhood Registry', 18),
-  (4663, '0x0000000000000000000000000000000000000004', 'AMZN', 'Amazon', 'stock_token', true, 'Robinhood Registry', 18),
-  (4663, '0x0000000000000000000000000000000000000005', 'MSFT', 'Microsoft', 'stock_token', true, 'Robinhood Registry', 18)
-on conflict (contract_address) do nothing;
+-- No asset is seeded. Every asset in this schema arrives from on-chain
+-- discovery: the indexer reads a contract's own name() and registers it only
+-- when the canonical metadata identifies it. Seeding placeholder rows would put
+-- unverifiable contract addresses in front of users as if they were observed.
+

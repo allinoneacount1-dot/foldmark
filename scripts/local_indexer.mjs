@@ -1,80 +1,79 @@
 #!/usr/bin/env node
-import { createPublicClient, http, parseAbi, parseAbiItem } from 'viem';
-import { defineChain } from 'viem';
-import { createClient } from '@supabase/supabase-js';
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-if (!url || !key) { console.error('SUPABASE env missing'); process.exit(1); }
-const supabase = createClient(url, key);
-const chain = defineChain({
-  id: 4663, name: 'Robinhood Chain', network: 'robinhood',
-  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: { default: { http: [process.env.NEXT_PUBLIC_ROBINHOOD_RPC || 'https://rpc.mainnet.chain.robinhood.com'] } },
-});
-const client = createPublicClient({ chain, transport: http(process.env.NEXT_PUBLIC_ROBINHOOD_RPC || 'https://rpc.mainnet.chain.robinhood.com') });
-const TRANSFER = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
-const ERC20_ABI = parseAbi(['function symbol() view returns (string)','function name() view returns (string)','function decimals() view returns (uint8)']);
-async function runOnce() {
-  const latest = await client.getBlockNumber();
-  const { data: cursor } = await supabase.from('indexer_state').select('*').eq('chain_id',4663).single();
-  const from = BigInt(cursor?.last_processed_block || 0);
-  const start = from === 0n ? (latest > 2n ? latest - 2n : 0n) : from + 1n;
-  const end = latest > start + 1n ? start + 1n : latest;
-  if (start > end) { console.log(`UP_TO_DATE ${Number(latest)}`); return; }
-  console.log(`INDEX ${Number(start)}→${Number(end)} latest ${Number(latest)}`);
-  const { data: knownAssets } = await supabase.from('assets').select('contract_address').eq('asset_type','stock_token').limit(50);
-  const knownSet = new Set((knownAssets||[]).map(a=>a.contract_address.toLowerCase()));
-  const knownList = [...knownSet];
-  const logs = knownList.length ? await client.getLogs({ address: knownList, event: TRANSFER, fromBlock: start, toBlock: end }) : [];
-  console.log(` logs known ${logs.length}`);
-  let inserted=0;
-  for (const log of logs.slice(0,500)) {
-    const { from, to, value } = log.args;
-    if (!from || !to || value===undefined) continue;
-    const { data: asset } = await supabase.from('assets').select('id').eq('contract_address', log.address.toLowerCase()).single();
-    const { error } = await supabase.from('transfers').upsert({
-      tx_hash: log.transactionHash, log_index: log.logIndex, block_number: Number(log.blockNumber),
-      asset_id: asset?.id || null, from_address: from.toLowerCase(), to_address: to.toLowerCase(),
-      amount: value.toString(), timestamp: new Date().toISOString(),
-    }, { onConflict: 'tx_hash,log_index', ignoreDuplicates: true });
-    if (!error) inserted++;
-    await supabase.from('wallets').upsert({ address: from.toLowerCase() }, { onConflict: 'address' });
-    await supabase.from('wallets').upsert({ address: to.toLowerCase() }, { onConflict: 'address' });
-  }
-  let discovered=0;
-  try {
-    const sample = await client.getLogs({ event: TRANSFER, fromBlock: end, toBlock: end });
-    const unknown = [...new Set(sample.map(l=>l.address.toLowerCase()).filter(a=>!knownSet.has(a)))].slice(0,3);
-    for (const addr of unknown) {
-      try {
-        const [sym, name] = await Promise.all([
-          client.readContract({ address: addr, abi: ERC20_ABI, functionName: 'symbol' }).catch(()=>null),
-          client.readContract({ address: addr, abi: ERC20_ABI, functionName: 'name' }).catch(()=>null),
-        ]);
-        if (!sym || !name) continue;
-        if (!String(name).toLowerCase().includes('robinhood token')) continue;
-        const { data: exists } = await supabase.from('assets').select('id').eq('contract_address', addr).single();
-        if (exists) continue;
-        let dec=18; try{ dec=await client.readContract({ address: addr, abi: ERC20_ABI, functionName:'decimals' }); }catch{}
-        await supabase.from('assets').insert({ chain_id:4663, contract_address: addr, symbol: String(sym).toUpperCase(), name: String(name), asset_type:'stock_token', verified:true, source:'Robinhood Chain — auto-discovered on-chain', decimals: dec });
-        discovered++; console.log(` discovered ${sym} ${addr}`);
-      } catch{}
-    }
-  } catch{}
-  await supabase.from('indexer_state').upsert({ chain_id:4663, last_processed_block: Number(end), last_finalized_block: Number(end), updated_at: new Date().toISOString() }, { onConflict:'chain_id' });
-  // flow calc — volume 24H
-  if (inserted>0 || discovered>0) {
-    const since = new Date(Date.now() - 24*3600*1000).toISOString();
-    const { data: assets } = await supabase.from('assets').select('id, contract_address, decimals').limit(13);
-    if (assets) for (const a of assets) {
-      const { data: transfers } = await supabase.from('transfers').select('amount, from_address, to_address').eq('asset_id', a.id).gte('timestamp', since).limit(500);
-      if (!transfers || !transfers.length) continue;
-      const dec = a.decimals || 18;
-      let vol=0; const cp=new Set();
-      transfers.forEach(t=>{ vol+=Number(t.amount)/Math.pow(10,dec); cp.add(t.from_address); cp.add(t.to_address); });
-      await supabase.from('flow_windows').upsert({ entity_type:'asset', entity_id: a.contract_address, window:'24H', inflow: vol, outflow: 0, net_flow: vol, transaction_count: transfers.length, unique_counterparties: cp.size, calculated_at: new Date().toISOString() }, { onConflict:'entity_type,entity_id,window' });
-    }
-  }
-  console.log(`DONE inserted ${inserted} discovered ${discovered} cursor → ${Number(end)}`);
+/**
+ * Local indexer driver.
+ *
+ * There is exactly one indexer implementation — src/lib/indexer.ts, invoked
+ * through /api/cron/index. This script only schedules calls to it, so local and
+ * deployed ingestion can never drift apart.
+ *
+ *   node scripts/local_indexer.mjs                    # every 2 minutes against localhost:3000
+ *   node scripts/local_indexer.mjs --once             # single pass
+ *   FOLDMARK_BASE_URL=https://… node scripts/local_indexer.mjs --interval 300
+ *
+ * CRON_SECRET is sent as a bearer token when it is present in the environment.
+ */
+
+const args = process.argv.slice(2);
+const once = args.includes("--once");
+const intervalArg = args.indexOf("--interval");
+const intervalSeconds = intervalArg >= 0 ? Number(args[intervalArg + 1]) : 120;
+
+const base = (process.env.FOLDMARK_BASE_URL || "http://localhost:3000").replace(/\/$/, "");
+const endpoint = `${base}/api/cron/index`;
+const secret = process.env.CRON_SECRET;
+
+if (!Number.isFinite(intervalSeconds) || intervalSeconds < 10) {
+  console.error("--interval must be at least 10 seconds");
+  process.exit(1);
 }
-runOnce().catch(e=>{ console.error(e); process.exit(1); });
+
+function stamp() {
+  return new Date().toISOString().slice(11, 19);
+}
+
+async function runOnce() {
+  const started = Date.now();
+  try {
+    const res = await fetch(endpoint, {
+      headers: secret ? { authorization: `Bearer ${secret}` } : undefined,
+      cache: "no-store",
+    });
+    const body = await res.json().catch(() => ({}));
+    const ms = Date.now() - started;
+
+    if (!res.ok) {
+      console.error(`${stamp()}  ${res.status}  ${body.error ?? "request failed"}  ${body.detail ?? ""}`);
+      return;
+    }
+
+    if (body.status === "UP_TO_DATE") {
+      console.log(`${stamp()}  up to date at ${body.latest}  (${ms}ms)`);
+      return;
+    }
+
+    const flows = body.flows?.addresses ?? 0;
+    console.log(
+      `${stamp()}  blocks ${body.fromBlock}→${body.toBlock}  ` +
+        `logs ${body.logs ?? 0}  inserted ${body.inserted ?? 0}  ` +
+        `discovered ${body.discovered ?? 0}  flows ${flows}  (${ms}ms)`,
+    );
+  } catch (error) {
+    console.error(`${stamp()}  unreachable: ${endpoint} — ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+console.log(`FOLDMARK indexer driver → ${endpoint}`);
+console.log(once ? "single pass" : `every ${intervalSeconds}s — Ctrl+C to stop`);
+
+await runOnce();
+
+if (!once) {
+  const timer = setInterval(runOnce, intervalSeconds * 1000);
+  const stop = () => {
+    clearInterval(timer);
+    console.log("\nstopped");
+    process.exit(0);
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+}

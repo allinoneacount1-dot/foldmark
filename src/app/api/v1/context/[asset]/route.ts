@@ -1,20 +1,27 @@
 import { NextResponse } from "next/server";
-import { STOCK_TOKENS } from "@/lib/assets";
+import { buildAssetContext } from "@/lib/context";
+import { WINDOWS, CHAIN, type FlowWindow } from "@/config/site";
 
-export async function GET(_: Request, { params }: { params: Promise<{ asset: string }> }) {
+export const dynamic = "force-dynamic";
+
+/** Unified agent context for one asset. Shares its builder with the landing page. */
+export async function GET(req: Request, { params }: { params: Promise<{ asset: string }> }) {
   const { asset } = await params;
-  const token = STOCK_TOKENS.find((t) => t.symbol.toLowerCase() === asset.toLowerCase() || t.contract.toLowerCase() === asset.toLowerCase());
-  if (!token) return NextResponse.json({ error: "ASSET NOT INDEXED", asset }, { status: 404 });
-  return NextResponse.json({
-    identity: token,
-    price: { status: "DATA UNAVAILABLE", source: "Chainlink" },
-    activity: { status: "INDEXING" },
-    flow: { status: "DATA UNAVAILABLE", window: "24h" },
-    liquidity: { status: "DATA UNAVAILABLE" },
-    markets: [],
-    protocols: [],
-    relationships: [],
-    data_freshness: new Date().toISOString(),
-    sources: ["Robinhood Registry", "Chainlink", "RPC"],
-  });
+  const { searchParams } = new URL(req.url);
+  const requested = searchParams.get("window") as FlowWindow | null;
+  const window: FlowWindow = requested && WINDOWS.includes(requested) ? requested : "24H";
+
+  const context = await buildAssetContext(asset, window);
+  if (!context) {
+    return NextResponse.json(
+      {
+        error: "ASSET_NOT_INDEXED",
+        asset,
+        chain_id: CHAIN.id,
+        methodology: "An asset resolves once the indexer has observed an ERC-20 Transfer for its contract.",
+      },
+      { status: 404 },
+    );
+  }
+  return NextResponse.json(context);
 }

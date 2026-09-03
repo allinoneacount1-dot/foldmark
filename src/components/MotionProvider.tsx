@@ -1,94 +1,58 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
+import { usePathname } from "next/navigation";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import Lenis from "lenis";
 
 gsap.registerPlugin(ScrollTrigger);
 
+const REDUCED = "(prefers-reduced-motion: reduce)";
+
+/**
+ * Motion has exactly one job: reveal a section once, as it enters.
+ *
+ * Scrolling is native. A dense data surface should scroll the way the operating
+ * system scrolls it — a smoothing layer adds a failure mode and buys nothing on
+ * a terminal.
+ *
+ * The reveal is fail-safe by construction: content ships visible, and the
+ * initial hidden state is set from JavaScript immediately before the animation
+ * that undoes it. If this component never runs, or the browser blocks the
+ * animation, every section is simply already on screen.
+ */
 export function MotionProvider({ children }: { children: React.ReactNode }) {
-  const lenisRef = useRef<Lenis | null>(null);
+  const pathname = usePathname();
 
   useEffect(() => {
-    // Lenis smooth scroll 0.9 — institutional, not bouncy
-    const lenis = new Lenis({
-      duration: 1.1,
-      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
-      smoothWheel: true,
-    });
-    lenisRef.current = lenis;
+    if (typeof window === "undefined") return;
+    if (window.matchMedia(REDUCED).matches) return;
 
-    function raf(time: number) {
-      lenis.raf(time);
-      requestAnimationFrame(raf);
-    }
-    requestAnimationFrame(raf);
+    const ctx = gsap.context(() => {
+      for (const section of gsap.utils.toArray<HTMLElement>("[data-reveal]")) {
+        const items = section.querySelectorAll("[data-reveal-item]");
+        if (!items.length) continue;
 
-    // Hero pin 120vh + parallax
-    const hero = document.querySelector("[data-hero]") as HTMLElement | null;
-    if (hero) {
-      gsap.to(hero, {
-        yPercent: -10,
-        ease: "none",
-        scrollTrigger: {
-          trigger: hero,
-          start: "top top",
-          end: "bottom top",
-          scrub: 1.2,
-        },
-      });
-    }
+        // Anything already in view on load stays put — a reveal that animates
+        // content the reader is looking at is noise, not pacing.
+        const box = section.getBoundingClientRect();
+        if (box.top < window.innerHeight * 0.9) continue;
 
-    // Section reveal 400-650ms, clip-path + opacity, stagger 40ms
-    const sections = gsap.utils.toArray<HTMLElement>("[data-reveal]");
-    sections.forEach((section) => {
-      const headline = section.querySelector("[data-headline]");
-      const body = section.querySelector("[data-body]");
-
-      const tl = gsap.timeline({
-        scrollTrigger: {
-          trigger: section,
-          start: "top 82%",
-          end: "top 55%",
-          scrub: false,
-          toggleActions: "play none none reverse",
-        },
-      });
-
-      if (headline) {
-        tl.fromTo(
-          headline,
-          { clipPath: "inset(0 100% 0 0)", opacity: 0 },
-          { clipPath: "inset(0 0% 0 0)", opacity: 1, duration: 0.65, ease: "power3.out" },
-          0
-        );
-      }
-      if (body) {
-        tl.fromTo(
-          body,
-          { y: 16, opacity: 0 },
-          { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" },
-          0.12
-        );
+        gsap.set(items, { opacity: 0, y: 14 });
+        gsap.to(items, {
+          opacity: 1,
+          y: 0,
+          duration: 0.52,
+          ease: "power3.out",
+          stagger: 0.06,
+          scrollTrigger: { trigger: section, start: "top 88%", once: true },
+        });
       }
     });
 
-    // Micro pulse for signal dots (already CSS, enhance with GSAP)
-    gsap.to("[data-pulse]", {
-      scale: 1.15,
-      duration: 0.9,
-      repeat: -1,
-      yoyo: true,
-      ease: "sine.inOut",
-      stagger: 0.2,
-    });
-
-    return () => {
-      lenis.destroy();
-      ScrollTrigger.getAll().forEach((t) => t.kill());
-    };
-  }, []);
+    ScrollTrigger.refresh();
+    return () => ctx.revert();
+  }, [pathname]);
 
   return <>{children}</>;
 }

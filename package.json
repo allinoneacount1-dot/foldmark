@@ -6,21 +6,19 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "index": "node scripts/local_indexer.mjs",
+    "index:once": "node scripts/local_indexer.mjs --once"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.114.0",
     "@tanstack/react-query": "^5.102.8",
-    "graphology": "^0.26.0",
-    "graphology-layout": "^0.6.1",
-    "graphology-layout-forceatlas2": "^0.10.1",
     "gsap": "^3.15.0",
-    "lenis": "^1.3.26",
+    "lightweight-charts": "^5.2.1",
     "next": "16.3.4",
-    "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "sigma": "^3.0.3",
     "viem": "^2.56.3",
     "wagmi": "^3.7.7"
   },
