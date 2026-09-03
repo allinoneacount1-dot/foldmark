@@ -94,19 +94,22 @@ export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; to
   // flow windows — skip if no new inserts to save time (Hobby 10s)
   if (inserted > 0 || discovered > 0) {
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  const { data: assets } = await supabase.from("assets").select("id, contract_address").limit(10);
+  const { data: assets } = await supabase.from("assets").select("id, contract_address, decimals").limit(13);
   if (assets) {
     for (const a of assets) {
-      const { data: transfers } = await supabase.from("transfers").select("amount").eq("asset_id", a.id).gte("timestamp", since).limit(500);
-      if (!transfers) continue;
-      let inflow = 0, outflow = 0;
+      const { data: transfers } = await supabase.from("transfers").select("amount, from_address, to_address").eq("asset_id", a.id).gte("timestamp", since).limit(500);
+      if (!transfers || !transfers.length) continue;
+      const dec = (a as any).decimals || 18;
+      let volume = 0;
+      const counterparties = new Set<string>();
       transfers.forEach((t: any) => {
-        const amt = Number(t.amount) / 1e18;
-        inflow += amt * 0.5;
-        outflow += amt * 0.5;
+        volume += Number(t.amount) / Math.pow(10, dec);
+        counterparties.add(t.from_address);
+        counterparties.add(t.to_address);
       });
+      // flow: volume = total transferred, net = volume (no classification yet — all as inflow volume)
       await supabase.from("flow_windows").upsert(
-        { entity_type: "asset", entity_id: a.contract_address, window: "24H", inflow, outflow, net_flow: inflow - outflow, transaction_count: transfers.length, unique_counterparties: 0, calculated_at: new Date().toISOString() },
+        { entity_type: "asset", entity_id: a.contract_address, window: "24H", inflow: volume, outflow: 0, net_flow: volume, transaction_count: transfers.length, unique_counterparties: counterparties.size, calculated_at: new Date().toISOString() },
         { onConflict: "entity_type,entity_id,window" }
       );
     }
