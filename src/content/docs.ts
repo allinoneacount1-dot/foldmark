@@ -194,10 +194,11 @@ export const DEFINITIONS: Definition[] = [
   {
     id: "liquidity",
     term: "LIQUIDITY",
-    kind: "UNAVAILABLE",
-    input: "Would require identified DEX pool contracts.",
-    computation: "Not computed in this deployment.",
-    caveat: `No pool contract is identified on chain ${CHAIN.id}, so every liquidity field reads DATA UNAVAILABLE.`,
+    kind: "DERIVED",
+    input: "Total reserve reported for the pool behind the chosen quote.",
+    computation: "Taken as reported by the market source alongside the price it quoted.",
+    caveat:
+      "This is pool reserve, not depth at a given size, and it covers only pools the source knows about. It is not a market-wide liquidity figure.",
   },
   {
     id: "holders",
@@ -210,10 +211,33 @@ export const DEFINITIONS: Definition[] = [
   {
     id: "price",
     term: "PRICE",
-    kind: "UNAVAILABLE",
-    input: "Would require a price oracle or a venue with observable trades.",
-    computation: "Read from the prices table when populated; the table is empty in this deployment.",
-    caveat: `No oracle is wired to chain ${CHAIN.id}. Every price field reads DATA UNAVAILABLE rather than estimating.`,
+    kind: "DERIVED",
+    input:
+      "DEX spot quotes for the asset's contract, taken independently from GeckoTerminal and DEX Screener, each with the pool reserve behind it.",
+    computation:
+      "Sources are ranked by price type, then by confidence — derived from pool depth and observation age — and the highest ranked observation is displayed. Prices are never averaged.",
+    caveat:
+      "This is a DEX spot price, not an issuer reference quote and not an oracle reading. No Robinhood price API or Chainlink feed is wired for this chain, so those two authorities are absent from the ranking.",
+  },
+  {
+    id: "price-divergence",
+    term: "SOURCE DIVERGENCE",
+    kind: "DERIVED",
+    input: "Two or more quotes of the same price type for one contract.",
+    computation:
+      "The spread between the highest and lowest is reported when it exceeds the tolerance for the shallower venue: 8% below $10k of reserve, 4% below $100k, 2% below $1M, 1% above.",
+    caveat:
+      "A spread is an observation about venues, not an arbitrage claim. Execution, slippage and depth at size are not modelled.",
+  },
+  {
+    id: "log-window",
+    term: "LOG WINDOW",
+    kind: "RAW",
+    input: "Measured by binary search against the free public endpoint.",
+    computation:
+      "The endpoint serves eth_getLogs for roughly the last 48-52 blocks and refuses older ranges as archive requests.",
+    caveat:
+      "At 0.101s per block that is about five seconds of history, against roughly 852,000 blocks a day. A cursor further behind cannot be caught up without an archive node, so the abandoned span is recorded as a gap rather than skipped silently.",
   },
 ];
 
@@ -237,12 +261,13 @@ export type Source = {
 
 export const SOURCES: Source[] = [
   {
-    name: `${CHAIN.name} RPC`,
-    purpose: "Chain head, Transfer logs, block timestamps, contract metadata calls.",
-    dataType: "JSON-RPC — eth_blockNumber, eth_getLogs, eth_getBlockByNumber, eth_call",
-    freshness: "Per indexer run; chain head is read live on every request.",
+    name: `${CHAIN.name} RPC — publicnode`,
+    purpose: "Chain head, Transfer logs, block timestamps, contract metadata calls. The live backbone.",
+    dataType: "JSON-RPC over HTTPS, plus a newHeads subscription over WebSocket",
+    freshness: "Event-driven. Measured block time 0.101s, round trip ~170-400ms.",
     status: "LIVE",
-    fallback: "Requests fail closed: the surface reports DATA UNAVAILABLE rather than serving a cached guess.",
+    fallback:
+      "The client holds an ordered endpoint list and fails over. If none answers, chain figures read DATA UNAVAILABLE rather than serving a stale guess.",
   },
   {
     name: "On-chain contract metadata",
@@ -250,11 +275,28 @@ export const SOURCES: Source[] = [
     dataType: "ERC-20 view calls",
     freshness: "Read once at discovery, then stored.",
     status: "LIVE",
-    fallback: "A contract that does not answer these calls is simply not registered as an asset.",
+    fallback: "A contract that does not answer these calls is never registered as an asset.",
+  },
+  {
+    name: "GeckoTerminal",
+    purpose: "DEX spot price and liquidity, addressed by contract. Also the OHLCV backfill source.",
+    dataType: "Public REST API",
+    freshness: "Refreshed on a 45s cache with a 60s stale window; budgeted at 10 calls/minute.",
+    status: "LIVE",
+    fallback: "Absent quotes simply do not appear. Nothing is estimated in their place.",
+  },
+  {
+    name: "DEX Screener",
+    purpose: "Second independent DEX quote, used to cross-check GeckoTerminal.",
+    dataType: "Public REST API",
+    freshness: "Their own responses carry max-age=60, so the cache matches it. Polling faster buys nothing.",
+    status: "LIVE",
+    fallback:
+      "Switchable off without losing a capability. Their terms restrict competing products and redistribution, so it is a cross-check, never a load-bearing dependency.",
   },
   {
     name: "FOLDMARK index (Postgres)",
-    purpose: "Normalised transfers, assets, wallets, flow windows and the indexer cursor.",
+    purpose: "Normalised transfers, assets, wallets, price observations, flow windows and the indexer cursor.",
     dataType: "Relational storage",
     freshness: "Advances with the indexer cursor; the lag is published on every page.",
     status: "LIVE",
@@ -263,26 +305,46 @@ export const SOURCES: Source[] = [
   {
     name: "Blockscout explorer",
     purpose: "Outbound verification links for addresses and contracts.",
-    dataType: "Hyperlink target only — no data is ingested from it.",
+    dataType: "Hyperlink target only — no data is ingested.",
     freshness: "n/a",
     status: "LIVE",
     fallback: "n/a",
   },
   {
-    name: "Price oracle",
-    purpose: "Would populate the prices table, and with it OHLC candles and any currency figure.",
-    dataType: "Oracle reads or venue trades",
+    name: "CoinGecko",
+    purpose: "Would provide broad crypto reference pricing and metadata.",
+    dataType: "Public REST API",
     freshness: "n/a",
     status: "PLANNED",
-    fallback: `Not wired to chain ${CHAIN.id}. Every price and currency field reads DATA UNAVAILABLE.`,
+    fallback:
+      "Reachable, but no Robinhood Chain asset platform was confirmed, so it is not called. Its free quota is 10,000 calls a month — about 333 a day — which would only ever be spent server-side and batched.",
   },
   {
-    name: "Verified protocol contract registry",
-    purpose: "Would enable flow classification and protocol exposure.",
-    dataType: "Address → protocol mapping",
+    name: "Robinhood Stock Token API",
+    purpose: "Would be the authoritative underlying reference quote and multiplier source.",
+    dataType: "REST",
     freshness: "n/a",
     status: "PLANNED",
-    fallback: "Until it exists every flow reads UNCLASSIFIED and the protocol registry is empty.",
+    fallback:
+      "Every candidate host failed to connect during probing. Treating it as available would be a guess, so it stays disabled until a request from this deployment actually succeeds.",
+  },
+  {
+    name: "Chainlink feeds",
+    purpose: "Would be the canonical on-chain oracle price, with round id and updatedAt.",
+    dataType: "On-chain aggregator reads",
+    freshness: "n/a",
+    status: "PLANNED",
+    fallback:
+      `Reading a feed needs its aggregator address, and none is verified for chain ${CHAIN.id}. Guessing one would produce confident nonsense.`,
+  },
+  {
+    name: "Archive node",
+    purpose: "Would allow the indexer to backfill history older than the free endpoint's log window.",
+    dataType: "JSON-RPC with archive access",
+    freshness: "n/a",
+    status: "PLANNED",
+    fallback:
+      "The free endpoint serves roughly 48 blocks of logs. Older ranges are refused, so gaps are recorded and reported rather than silently skipped.",
   },
 ];
 
@@ -334,7 +396,11 @@ export const ROADMAP: RoadmapItem[] = [
   { title: "Market topology", detail: "Deterministic source → asset → destination graph from observed transfers.", status: "LIVE" },
   { title: "Per-address net flow", detail: "Directional flow precomputed per address across all five windows.", status: "LIVE" },
   { title: "Machine-readable context API", detail: "Every measurement available as JSON with states and provenance.", status: "LIVE" },
-  { title: "Price pipeline", detail: "Populate the prices table so OHLC candles and currency figures become real.", status: "PLANNED" },
+  { title: "DEX price ingestion", detail: "Prices observed from two independent free sources, reconciled by depth and age, and persisted on every ingestion pass.", status: "LIVE" },
+  { title: "Provider budget and circuit breaking", detail: "Every outbound call is budgeted, cached and coalesced; a failing provider is stood down rather than hammered.", status: "LIVE" },
+  { title: "Live chain follower", detail: "A WebSocket follower that indexes blocks while their logs are still inside the free endpoint’s window.", status: "LIVE" },
+  { title: "Issuer reference and oracle prices", detail: "Wire the Robinhood Stock Token API and a verified Chainlink aggregator so the two highest-authority price types enter the ranking.", status: "PLANNED" },
+  { title: "Archive backfill", detail: "Recover log history older than the free endpoint’s window, which needs an archive node.", status: "PLANNED" },
   { title: "Protocol contract registry", detail: "Address-to-protocol mapping, which unlocks flow classification and protocol exposure.", status: "PLANNED" },
   { title: "Balance reconstruction", detail: "Full-history replay to derive holder counts and true portfolio positions.", status: "PLANNED" },
   { title: "Historical analytics", detail: "Retention beyond the rolling window, enabling longer comparisons.", status: "PLANNED" },
@@ -345,8 +411,19 @@ export const ROADMAP: RoadmapItem[] = [
 
 export const LIMITATIONS: { title: string; detail: string }[] = [
   {
-    title: "No price data",
-    detail: `No oracle or observable venue is wired to chain ${CHAIN.id}. Price, market capitalisation, portfolio value and any currency-denominated figure read DATA UNAVAILABLE. OHLC candles cannot be produced until the prices table is populated.`,
+    title: "No issuer reference price, and no oracle",
+    detail:
+      "Price is observed from DEX pools only. The Robinhood Stock Token API did not answer from this deployment and no Chainlink aggregator address is verified for this chain, so the two highest-authority price types — issuer reference and on-chain oracle — are absent from the ranking. What is shown is a DEX spot price, labelled as such.",
+  },
+  {
+    title: "Log history is about five seconds deep",
+    detail:
+      "The free public endpoint serves eth_getLogs for roughly 48 blocks and refuses older ranges as archive requests. At 0.101s per block the chain produces about 852,000 blocks a day, so any gap in coverage is unrecoverable without a paid archive node. Gaps are counted and reported rather than skipped silently.",
+  },
+  {
+    title: "Continuous ingestion needs a process, not a cron",
+    detail:
+      "Because of the log window, chain indexing must follow the head over a WebSocket. Serverless hosting cannot hold that connection open, so scripts/live-indexer.mjs runs as a small process. Price ingestion has no such constraint and runs on the scheduled route.",
   },
   {
     title: "No flow classification",
@@ -358,7 +435,8 @@ export const LIMITATIONS: { title: string; detail: string }[] = [
   },
   {
     title: "Rolling window, not full history",
-    detail: "The index holds recent blocks rather than the chain from genesis. Holder counts and lifetime figures are not derivable, and long windows may be PARTIAL.",
+    detail:
+      "The index holds what it has observed since it started following the chain, not the chain from genesis. Holder counts and lifetime figures are not derivable, and long windows may be PARTIAL.",
   },
   {
     title: "Row caps produce lower bounds",

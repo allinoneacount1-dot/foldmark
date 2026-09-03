@@ -1,6 +1,12 @@
 import { createPublicClient, http, parseAbi, parseAbiItem, type Log } from "viem";
 import { robinhoodChain } from "@/lib/wagmi";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import {
+  activeEndpoint as activeRpcEndpoint,
+  clampToServableRange,
+  isArchiveRefusal,
+  ArchiveRangeRefused,
+} from "@/server/market-data/providers/rpc";
 import { WINDOW_MS, WINDOWS, type FlowWindow } from "@/config/site";
 import { fromBaseUnits } from "@/lib/format";
 
@@ -21,24 +27,50 @@ const FLOW_TOP_N = 200;
 
 type TransferLog = Log<bigint, number, false, typeof TRANSFER_EVENT>;
 
-function rpcUrl() {
-  return process.env.NEXT_PUBLIC_ROBINHOOD_RPC || "https://rpc.mainnet.chain.robinhood.com";
-}
+
 
 export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) {
   if (!isSupabaseConfigured() || !supabase) return { error: "SUPABASE_NOT_CONFIGURED" as const };
   const sb = supabase;
-  const client = createPublicClient({ chain: robinhoodChain, transport: http(rpcUrl()) });
+  const client = createPublicClient({ chain: robinhoodChain, transport: http(activeRpcEndpoint()) });
 
   // 1. every asset we already track, not just stock tokens
   const { data: knownAssets } = await sb.from("assets").select("id, contract_address, decimals").limit(200);
   const known = new Map((knownAssets ?? []).map((a) => [a.contract_address.toLowerCase(), a]));
   const knownList = [...known.keys()] as `0x${string}`[];
 
-  // 2. transfers for tracked assets across the range
-  const logs: TransferLog[] = knownList.length
-    ? ((await client.getLogs({ address: knownList, event: TRANSFER_EVENT, fromBlock, toBlock })) as TransferLog[])
-    : [];
+  /**
+   * 2. Transfers across the range — clamped to what a free endpoint will serve.
+   *
+   * The public node retains roughly 48 blocks of logs. A cursor further behind
+   * than that cannot be caught up: those logs are only available from an
+   * archive node, which is a paid service. Rather than fail the whole run or,
+   * worse, advance the cursor as though the range had been read, the range is
+   * clamped and the abandoned blocks are reported as an explicit gap.
+   *
+   * Closing that gap for good is what scripts/live-indexer.mjs is for: it
+   * follows the head continuously, so logs are taken while still inside the
+   * window.
+   */
+  const head = Number(await client.getBlockNumber());
+  const servable = clampToServableRange(Number(fromBlock), Number(toBlock), head);
+  const gapBlocks = servable.skipped;
+  const from = BigInt(servable.from);
+  const to = BigInt(servable.to);
+
+  let logs: TransferLog[] = [];
+  let logQueryError: string | null = null;
+  if (knownList.length) {
+    try {
+      logs = (await client.getLogs({ address: knownList, event: TRANSFER_EVENT, fromBlock: from, toBlock: to })) as TransferLog[];
+    } catch (error) {
+      if (isArchiveRefusal(error)) {
+        logQueryError = `log range refused: ${new ArchiveRangeRefused(servable.from, head).message}`;
+      } else {
+        throw error;
+      }
+    }
+  }
 
   // 3. real block timestamps — one lookup per distinct block, not per log.
   //    Without this every window measures indexer throughput instead of market activity.
@@ -112,7 +144,7 @@ export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; to
   let discovered = 0;
   let sampled = 0;
   try {
-    const sample = (await client.getLogs({ event: TRANSFER_EVENT, fromBlock: toBlock, toBlock })) as TransferLog[];
+    const sample = (await client.getLogs({ event: TRANSFER_EVENT, fromBlock: to, toBlock: to })) as TransferLog[];
     sampled = sample.length;
     const unknown = [
       ...new Set(sample.map((l) => l.address.toLowerCase()).filter((a) => !known.has(a))),
@@ -154,8 +186,8 @@ export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; to
   await sb.from("indexer_state").upsert(
     {
       chain_id: robinhoodChain.id,
-      last_processed_block: Number(toBlock),
-      last_finalized_block: Number(toBlock),
+      last_processed_block: Number(to),
+      last_finalized_block: Number(to),
       updated_at: new Date().toISOString(),
     },
     { onConflict: "chain_id" },
@@ -165,8 +197,13 @@ export async function runIndexer({ fromBlock, toBlock }: { fromBlock: bigint; to
 
   return {
     inserted,
-    fromBlock: Number(fromBlock),
-    toBlock: Number(toBlock),
+    requestedFrom: Number(fromBlock),
+    fromBlock: Number(from),
+    toBlock: Number(to),
+    head,
+    /** Blocks abandoned because a free endpoint will not serve their logs. */
+    gapBlocks,
+    logQueryError,
     logs: logs.length,
     sampled,
     discovered,

@@ -10,6 +10,9 @@ import { ExplorerLink } from "@/components/ui/controls";
 import { MarketChart } from "@/components/charts/MarketChart";
 import { TopologyView } from "@/components/graph/TopologyView";
 import { CapitalFlowModule, NetworkActivityModule, TopFlowsModule } from "@/components/intelligence/rail";
+import { MarketPanel } from "@/components/intelligence/MarketPanel";
+import { getMarketSnapshot } from "@/server/market-data";
+import { markViewed } from "@/server/market-data/scheduler";
 import {
   getAssetByAddress,
   getIndexerStatus,
@@ -89,7 +92,13 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
   const graph = buildAssetGraph(window7d.rows, asset, { limit: 7 });
   const counterparties = foldByAddress(window7d.rows, [asset], 12);
   const edges = foldEdges(window7d.rows, [asset], 8);
-  const prices = await getLatestPrices([asset.id]);
+  // Viewing an asset promotes it to the fastest refresh tier for the next few
+  // minutes: the free quota is spent where someone is actually looking.
+  markViewed(asset.contract_address);
+  const [prices, market] = await Promise.all([
+    getLatestPrices([asset.id]),
+    getMarketSnapshot(asset.contract_address),
+  ]);
   const price = prices.get(asset.id);
 
   const cell = (value: number | null | undefined, state: (typeof windowRows)[number]): Measured<number | string> =>
@@ -164,7 +173,17 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
       <Tape label={`${asset.symbol} status`}>
         <TapeCell
           label="PRICE"
-          measurement={price ? measured(price.price, { source: price.source }, { observedAt: price.observedAt }) : unavailable<number>(ORACLE)}
+          measurement={
+            market?.canonical
+              ? measured(
+                  market.canonical.price,
+                  { source: `${market.canonical.source} · ${market.canonical.priceType.replace("_", " ").toLowerCase()}` },
+                  { observedAt: market.canonical.observedAt },
+                )
+              : price
+                ? measured(price.price, { source: price.source }, { observedAt: price.observedAt })
+                : unavailable<number>(ORACLE)
+          }
           format={(v) => `$${compact(Number(v), 4)}`}
         />
         <TapeCell label="TRANSFERS 24H" measurement={cell(windowRows[2].folded?.transfers ?? 0, windowRows[2])} format={(v) => integer(Number(v))} />
@@ -184,6 +203,7 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
             left={<MarketChart contract={asset.contract_address} symbol={asset.symbol} height={360} />}
             right={
               <RailColumn revision={asset.id}>
+                <MarketPanel snapshot={market} symbol={asset.symbol} now={now} />
                 <CapitalFlowModule window="7D" activity={{ ...activity24h, ...deriveActivity(window7d, now) }} edges={edges} assets={[asset]} />
                 <NetworkActivityModule window="7D" activity={{ ...activity24h, ...deriveActivity(window7d, now) }} />
                 <TopFlowsModule edges={edges} assets={[asset]} window="7D" state={window7d.state} />

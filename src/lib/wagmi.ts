@@ -8,8 +8,16 @@ export const robinhoodChain = defineChain({
   network: "robinhood",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: {
+    // Ordered by what actually answered when probed on 2026-09-03. The endpoint
+    // this file used to hold on its own refused every connection, which took the
+    // whole chain read down with it; viem falls back through the list instead.
     default: {
-      http: [process.env.NEXT_PUBLIC_ROBINHOOD_RPC || "https://rpc.mainnet.chain.robinhood.com"],
+      http: [
+        ...(process.env.NEXT_PUBLIC_ROBINHOOD_RPC ? [process.env.NEXT_PUBLIC_ROBINHOOD_RPC] : []),
+        "https://robinhood-rpc.publicnode.com",
+        "https://rpc.mainnet.chain.robinhood.com",
+      ],
+      webSocket: ["wss://robinhood-rpc.publicnode.com"],
     },
   },
   blockExplorers: {

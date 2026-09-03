@@ -44,9 +44,10 @@ export default function LimitationsPage() {
             ))}
           </div>
           <Note tone="warn">
-            The two that matter most are the missing price source and the empty contracts registry. Between them they
-            account for every withheld price, liquidity, market, holder and protocol figure in the product — and for
-            every flow being UNCLASSIFIED.
+            The one that shapes the architecture most is the log window. The free public endpoint serves roughly 48
+            blocks of logs — about five seconds at this chain&apos;s 0.101s block time — against roughly 852,000 blocks a
+            day. A scheduled job can therefore never catch up across a gap, which is why chain ingestion follows the
+            head continuously rather than polling, and why an unreachable span is recorded as a gap rather than skipped.
           </Note>
         </DocSection>
 
@@ -81,14 +82,6 @@ export default function LimitationsPage() {
           </P>
           <ol className="flex flex-col gap-3">
             <li className="border-l-2 border-signal/50 py-1 pl-4">
-              <p className="label text-ink">A price source</p>
-              <p className="mt-1 text-body-s text-ink-muted">
-                Populating the prices table turns on OHLC candles, currency-denominated flow, portfolio value and market
-                capitalisation. The aggregation and the chart are already built and tested against the schema — they are
-                waiting on observations, not on code.
-              </p>
-            </li>
-            <li className="border-l-2 border-signal/50 py-1 pl-4">
               <p className="label text-ink">A verified contract registry</p>
               <p className="mt-1 text-body-s text-ink-muted">
                 Mapping addresses to protocols turns on{" "}
@@ -96,7 +89,22 @@ export default function LimitationsPage() {
                   flow classification
                 </Link>
                 , protocol exposure on assets and wallets, and venue nodes in the topology. Historical flows can be
-                relabelled from the transfers already stored.
+                relabelled from the transfers already stored, so nothing observed so far is wasted.
+              </p>
+            </li>
+            <li className="border-l-2 border-signal/50 py-1 pl-4">
+              <p className="label text-ink">An issuer reference quote and an oracle feed</p>
+              <p className="mt-1 text-body-s text-ink-muted">
+                DEX spot prices are observed and reconciled today. Adding the Robinhood Stock Token API and a verified
+                Chainlink aggregator would put the two highest-authority price types into the ranking, which is what
+                turns a venue quote into a reference price a divergence can be measured against.
+              </p>
+            </li>
+            <li className="border-l-2 border-rule-strong py-1 pl-4">
+              <p className="label text-ink">An archive node</p>
+              <p className="mt-1 text-body-s text-ink-muted">
+                The only thing that can recover log history older than the free endpoint&apos;s window. It is the one
+                item on this page that cannot be solved on a free tier, so gaps are reported instead.
               </p>
             </li>
           </ol>

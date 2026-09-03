@@ -9,7 +9,9 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "index": "node scripts/local_indexer.mjs",
-    "index:once": "node scripts/local_indexer.mjs --once"
+    "index:once": "node scripts/local_indexer.mjs --once",
+    "live": "node scripts/live-indexer.mjs",
+    "probe:providers": "node scripts/probe-providers.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.114.0",

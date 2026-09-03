@@ -2,6 +2,9 @@ import { DocTitle, DocSection, P, Note, DocFooterNav } from "@/components/docs/D
 import { StateTag } from "@/components/ui/primitives";
 import { getIndexerStatus, getAssets, getProtocols, getRecentTransfers, countRows, requestNow,
 } from "@/lib/queries";
+import { health } from "@/server/market-data/budget";
+import { PROVIDERS } from "@/server/market-data/registry";
+import { activeEndpoint, lastRpcLatencyMs } from "@/server/market-data/providers/rpc";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { blockLabel, integer, relativeTime } from "@/lib/format";
 import { FRESHNESS_BUDGET_MS, type DataState } from "@/lib/data-state";
@@ -33,6 +36,7 @@ export default async function StatusPage() {
     countRows("transfers"),
   ]);
 
+  const providers = health(now);
   const storageConfigured = isSupabaseConfigured() && supabase !== null;
   const cursorAge = indexer.updatedAt ? now - new Date(indexer.updatedAt).getTime() : null;
   const lag = indexer.lagBlocks.value;
@@ -44,7 +48,7 @@ export default async function StatusPage() {
       label: indexer.chainHead.value !== null ? "OPERATIONAL" : "UNREACHABLE",
       detail:
         indexer.chainHead.value !== null
-          ? `eth_blockNumber answered. Chain head ${blockLabel(indexer.chainHead.value)}.`
+          ? `eth_blockNumber answered from ${new URL(activeEndpoint()).host} in ${lastRpcLatencyMs() ?? "?"}ms. Chain head ${blockLabel(indexer.chainHead.value)}.`
           : `No response from the ${CHAIN.name} RPC on this request. Every live chain read is failing.`,
     },
     {
@@ -157,6 +161,79 @@ export default async function StatusPage() {
               </div>
             ))}
           </div>
+        </DocSection>
+
+        <DocSection id="providers" title="Market data providers">
+          <P>
+            Each provider reports what it is permitted to do, what it has spent against that budget, and whether its
+            support for this chain was verified rather than assumed. A provider whose chain support is not SUPPORTED is
+            never called.
+          </P>
+          <div className="flex flex-col gap-px bg-rule">
+            {providers.map((p) => {
+              const facts = PROVIDERS[p.id];
+              return (
+                <div key={p.id} className="bg-void p-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-3">
+                    <span className="label text-ink">{facts.label}</span>
+                    <StateTag
+                      state={
+                        p.status === "UP"
+                          ? "OK"
+                          : p.status === "DISABLED"
+                            ? "INDEXING"
+                            : p.status === "RATE_LIMITED" || p.status === "DOWN"
+                              ? "UNAVAILABLE"
+                              : "PARTIAL"
+                      }
+                      label={p.status}
+                    />
+                  </div>
+                  <p className="mt-1.5 max-w-[68ch] text-body-s text-ink-muted">{facts.role}</p>
+                  <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1">
+                    <div className="flex items-baseline gap-2">
+                      <dt className="label-s">CHAIN SUPPORT</dt>
+                      <dd className="text-body-s text-ink-faint">{facts.chainSupport}</dd>
+                    </div>
+                    {p.minuteBudget !== null ? (
+                      <div className="flex items-baseline gap-2">
+                        <dt className="label-s">MINUTE</dt>
+                        <dd className="tabular text-body-s text-ink-faint">
+                          {p.callsThisMinute} / {p.minuteBudget}
+                        </dd>
+                      </div>
+                    ) : null}
+                    {p.monthBudget !== null ? (
+                      <div className="flex items-baseline gap-2">
+                        <dt className="label-s">MONTH</dt>
+                        <dd className="tabular text-body-s text-ink-faint">
+                          {integer(p.callsThisMonth)} / {integer(p.monthBudget)}
+                        </dd>
+                      </div>
+                    ) : null}
+                    {p.latencyMs !== null ? (
+                      <div className="flex items-baseline gap-2">
+                        <dt className="label-s">LATENCY</dt>
+                        <dd className="tabular text-body-s text-ink-faint">{p.latencyMs}ms</dd>
+                      </div>
+                    ) : null}
+                    {p.cacheHitRate !== null ? (
+                      <div className="flex items-baseline gap-2">
+                        <dt className="label-s">CACHE HITS</dt>
+                        <dd className="tabular text-body-s text-ink-faint">{Math.round(p.cacheHitRate * 100)}%</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                  {p.lastError ? <p className="label-s mt-1.5 text-negative">LAST ERROR {p.lastError}</p> : null}
+                </div>
+              );
+            })}
+          </div>
+          <Note>
+            Budgets are enforced before every outbound call. Three consecutive failures open a circuit breaker with
+            exponential backoff; a 429 opens it immediately. Every provider call is made server-side and cached, so a
+            hundred readers cost one request rather than a hundred.
+          </Note>
         </DocSection>
 
         <DocSection id="no-uptime" title="Why there are no uptime figures">

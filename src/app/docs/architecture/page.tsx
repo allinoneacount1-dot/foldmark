@@ -59,10 +59,26 @@ const MODULES: Module[] = [
       "Layout is a pure function of the ranked data, so server and client agree and the same input always draws the same map. Nodes with no drawn edge are omitted rather than floated.",
   },
   {
+    id: "market-data",
+    name: "Market data layer",
+    file: "src/server/market-data/**",
+    does: "Normalises every external price source behind one MarketSnapshot. Holds the provider registry, the rate budget, the cache with request coalescing, and the reconciliation rules.",
+    guarantees:
+      "The interface has never seen a provider response. A provider can be throttled, replaced or removed inside this directory without touching a component. Every outbound call asks the budget first, and a hundred readers produce one request.",
+  },
+  {
+    id: "rpc-failover",
+    name: "RPC failover client",
+    file: "src/server/market-data/providers/rpc.ts",
+    does: "Chain reads across an ordered list of endpoints, remembering which one answered last. Also measures and enforces the free endpoint's log window.",
+    guarantees:
+      "A single dead endpoint degrades rather than breaks: the URL this repository shipped with refuses every connection, which is what had put DATA UNAVAILABLE across the whole product.",
+  },
+  {
     id: "price-pipeline",
     name: "Price pipeline",
     file: "src/lib/ohlc.ts",
-    does: "Aggregates stored price observations into OHLC buckets and decides which intervals the available data can honestly support.",
+    does: "Aggregates stored price observations into OHLC buckets and decides which intervals the available data can honestly support. The observations themselves arrive from the market data layer and are persisted on every ingestion pass.",
     guarantees:
       "A bucket with no observation produces no candle. An interval is offered only when at least four of its buckets contain data. Nothing is carried forward.",
   },
@@ -96,28 +112,37 @@ export default function ArchitecturePage() {
         <DocSection id="pipeline" title="The pipeline">
           <div className="border border-rule bg-surface p-5">
             <pre className="overflow-x-auto font-mono text-data-s leading-[1.9] text-ink-muted">
-{`${CHAIN.name.toUpperCase()}  ·  chain ${CHAIN.id}
+{`${CHAIN.name.toUpperCase()}  ·  chain ${CHAIN.id}  ·  0.101s per block  ·  ~852,000 blocks/day
    │
-   │  eth_getLogs (Transfer)  ·  eth_getBlockByNumber  ·  eth_call  ·  eth_blockNumber
-   ▼
-INDEXER                    cursor-driven · idempotent · block-time resolved
+   │  wss newHeads ─────────────┐        https eth_getLogs · eth_getBlockByNumber · eth_call
+   ▼                            │
+LIVE FOLLOWER                   │        RPC FAILOVER CLIENT
+scripts/live-indexer.mjs        │        ordered endpoints, last-good preferred
+   │  follows the head because  │
+   │  the free node retains     │
+   │  only ~48 blocks of logs   │
+   └────────────┬───────────────┘
+                ▼
+         INDEXER  ·  block-time resolved  ·  gaps recorded, never skipped
+                │
+                ▼
+         POSTGRES   assets · transfers · wallets · prices · flow_windows
+                │
+                ├──▶ FLOW ENGINE           inflow / outflow / net per address
+                ├──▶ RELATIONSHIP ENGINE   directed edges → market topology
+                └──▶ CANDLE ENGINE         OHLC from stored observations
+
+MARKET DATA LAYER  ·  server-side only  ·  budget + cache + coalescing
    │
-   ▼
-NORMALISATION              decimals · address case · base units → token units
-   │
-   ▼
-POSTGRES                   indexer_state · assets · transfers · wallets
-   │                       flow_windows · protocols · contracts · prices
-   │
-   ├──▶ FLOW ENGINE            inflow / outflow / net per address, 5 windows
-   ├──▶ RELATIONSHIP ENGINE    directed edges → market topology
-   └──▶ PRICE PIPELINE         OHLC aggregation  (awaiting a price source)
-   │
-   ▼
-READ LAYER                 bounded folds · every result carries a state
-   │
-   ├──▶ WEB CLIENT   server components render Measured values
-   └──▶ API          the same values as JSON  ──▶  AGENTS`}
+   ├── GeckoTerminal   DEX spot + OHLCV backfill   10 req/min budget
+   ├── DEX Screener    second DEX quote            60s cache, matches theirs
+   └── (reconcile)     ranked by type, then depth and age — never averaged
+                │
+                ▼
+         MarketSnapshot   canonical price + every observation + divergence
+                │
+                ├──▶ WEB UI   context, visually
+                └──▶ API      context, structurally  ──▶  AGENTS`}
             </pre>
           </div>
           <Note>

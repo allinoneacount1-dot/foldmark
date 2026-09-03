@@ -11,7 +11,7 @@
  */
 
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
-import { ROBINHOOD_CHAIN } from "@/lib/chain";
+import { ROBINHOOD_CHAIN, getPulse } from "@/lib/chain";
 import { WINDOW_MS, type FlowWindow, type AssetType } from "@/config/site";
 import { fromBaseUnits } from "@/lib/format";
 import { type DataState, type Measured, indexing, measured, unavailable } from "@/lib/data-state";
@@ -70,20 +70,13 @@ export function since(window: FlowWindow, now: number): string {
 /* ---------------------------------------------------------------- chain */
 
 export async function getChainHead(): Promise<Measured<number>> {
-  try {
-    const res = await fetch(ROBINHOOD_CHAIN.rpc, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
-      cache: "no-store",
-    });
-    if (!res.ok) return unavailable<number>(RPC, "RPC responded " + res.status);
-    const json = (await res.json()) as { result?: string };
-    if (!json.result) return unavailable<number>(RPC, "RPC returned no result");
-    return measured(parseInt(json.result, 16), RPC, { observedAt: new Date().toISOString() });
-  } catch {
-    return unavailable<number>(RPC, "RPC unreachable");
+  const pulse = await getPulse();
+  if (pulse.block === null) {
+    return unavailable<number>({ ...RPC, source: `Robinhood Chain RPC (${pulse.endpoint})` }, pulse.detail);
   }
+  return measured(pulse.block, { ...RPC, source: `Robinhood Chain RPC (${pulse.endpoint})` }, {
+    observedAt: pulse.updatedAt,
+  });
 }
 
 /* -------------------------------------------------------------- indexer */
