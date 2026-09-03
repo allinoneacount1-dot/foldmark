@@ -27,7 +27,7 @@ export async function GET(req: Request) {
     window,
     type,
     state: activity.state,
-    index_coverage: coverageBlock(window, activity.coverage),
+    index_coverage: coverageBlock(window, activity.coverage, now),
     nodes: graph.nodes.map((n) => ({
       id: n.id,
       kind: n.kind,

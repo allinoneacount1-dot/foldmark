@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { foldByAddress, flowForAsset, dominantFlow, foldEdges } from "@/lib/queries";
-import { toNotional, notionalNote, MAX_ACCEPTABLE_PRICE_AGE_MS } from "@/lib/notional";
+import {
+  toNotional,
+  notionalNote,
+  prepareSeries,
+  alignPrice,
+  DEFAULT_ALIGNMENT,
+  MAX_ALIGNMENT_DELTA_MS,
+} from "@/lib/notional";
 import { ASSETS, transfer } from "./fixtures";
 
 /**
@@ -104,83 +111,223 @@ describe("foldEdges — an edge belongs to exactly one asset", () => {
   });
 });
 
-describe("toNotional — the only honest cross-asset total", () => {
-  const now = Date.parse("2026-09-04T12:00:00.000Z");
-  const fresh = (iso: string) => ({ price: 2, observedAt: iso, source: "geckoterminal" });
+describe("toNotional — a current price is not a historical price", () => {
+  const T = (iso: string) => Date.parse(iso);
+  const pt = (iso: string, price: number) => ({ price, observedAt: iso, source: "geckoterminal" });
 
-  it("converts to USD when every asset has a fresh price", () => {
-    const result = toNotional(
-      [
-        { assetId: "asset-nvda", amount: 10 },
-        { assetId: "asset-aapl", amount: 5 },
-      ],
-      new Map([
-        ["asset-nvda", fresh("2026-09-04T11:59:00.000Z")],
-        ["asset-aapl", fresh("2026-09-04T11:59:30.000Z")],
-      ]),
-      now,
-    );
-    expect(result.state).toBe("OK");
-    expect(result.usd).toBeCloseTo(30, 6);
-    expect(result.coverage).toBe(1);
-  });
+  /**
+   * The rule under test: every transfer is valued at the price that held when
+   * it happened.
+   *
+   * Multiplying a whole window of transfers by the newest quote produces a
+   * number that looks measured and is not. Nothing here interpolates, carries a
+   * price forward past its tolerance, or lets a later observation reach back to
+   * value an earlier transfer.
+   */
 
-  it("excludes an asset with no price and drops to PARTIAL rather than guessing", () => {
-    const result = toNotional(
-      [
-        { assetId: "asset-nvda", amount: 10 },
-        { assetId: "asset-aapl", amount: 5 },
-      ],
-      new Map([["asset-nvda", fresh("2026-09-04T11:59:00.000Z")]]),
-      now,
-    );
-    expect(result.state).toBe("PARTIAL");
-    expect(result.usd).toBeCloseTo(20, 6); // AAPL contributed nothing
-    expect(result.excluded).toEqual([{ assetId: "asset-aapl", reason: "NO_PRICE", ageMs: null }]);
-  });
+  it("REGRESSION: a 24H-old transfer is NOT valued at a quote observed 23 hours later", () => {
+    // The exact scenario from the directive: the quote is only 2 minutes old
+    // relative to "now", and 23 hours away from the transfer it would price.
+    const movements = [{ assetId: "asset-nvda", amount: 10, at: "2026-09-03T04:00:00.000Z" }];
+    const series = prepareSeries(new Map([["asset-nvda", [pt("2026-09-04T03:00:00.000Z", 500)]]]));
 
-  it("refuses a price older than the acceptable age instead of carrying it forward", () => {
-    const stale = new Date(now - MAX_ACCEPTABLE_PRICE_AGE_MS - 1000).toISOString();
-    const result = toNotional(
-      [{ assetId: "asset-nvda", amount: 10 }],
-      new Map([["asset-nvda", fresh(stale)]]),
-      now,
-    );
+    const result = toNotional(movements, series);
+
+    expect(result.usd).toBeNull();
     expect(result.state).toBe("UNAVAILABLE");
-    expect(result.usd).toBeNull();
-    expect(result.excluded[0].reason).toBe("PRICE_TOO_OLD");
+    expect(result.transfersPriced).toBe(0);
+    // The only observation lies AFTER the transfer, so under no-look-ahead
+    // there is nothing that could have priced it at the time.
+    expect(result.excludedByReason.NO_PRIOR_OBSERVATION).toBe(1);
   });
 
-  it("treats an unparseable observation time as an unknown age and excludes it", () => {
-    const result = toNotional(
-      [{ assetId: "asset-nvda", amount: 10 }],
-      new Map([["asset-nvda", { price: 2, observedAt: "not-a-date", source: "x" }]]),
-      now,
+  it("selects the nearest observation at or before the transfer", () => {
+    const movements = [{ assetId: "asset-nvda", amount: 2, at: "2026-09-03T12:00:00.000Z" }];
+    const series = prepareSeries(
+      new Map([
+        [
+          "asset-nvda",
+          [
+            pt("2026-09-03T11:00:00.000Z", 100), // too old
+            pt("2026-09-03T11:55:00.000Z", 200), // the one that held
+            pt("2026-09-03T12:30:00.000Z", 900), // look-ahead, must not be used
+          ],
+        ],
+      ]),
     );
-    expect(result.usd).toBeNull();
-    expect(result.excluded[0].reason).toBe("PRICE_TOO_OLD");
+
+    const result = toNotional(movements, series);
+
+    expect(result.state).toBe("OK");
+    expect(result.usd).toBeCloseTo(400, 6); // 2 x 200, not 2 x 900 and not 2 x 100
+    expect(result.oldestAlignmentDeltaMs).toBe(5 * 60_000);
   });
 
-  it("excludes a non-positive price rather than multiplying by zero", () => {
-    const result = toNotional(
-      [{ assetId: "asset-nvda", amount: 10 }],
-      new Map([["asset-nvda", { price: 0, observedAt: "2026-09-04T11:59:00.000Z", source: "x" }]]),
-      now,
+  it("prices two transfers in the same window at their two different prices", () => {
+    // The whole point: one window, one asset, two moments, two valuations.
+    const movements = [
+      { assetId: "asset-nvda", amount: 1, at: "2026-09-03T06:00:00.000Z" },
+      { assetId: "asset-nvda", amount: 1, at: "2026-09-03T18:00:00.000Z" },
+    ];
+    const series = prepareSeries(
+      new Map([["asset-nvda", [pt("2026-09-03T06:00:00.000Z", 100), pt("2026-09-03T18:00:00.000Z", 300)]]]),
     );
-    expect(result.excluded[0].reason).toBe("PRICE_NOT_FINITE");
-    expect(result.usd).toBeNull();
+
+    const result = toNotional(movements, series);
+
+    expect(result.transfersPriced).toBe(2);
+    // 100 + 300. Valuing both at the latest quote would give 600.
+    expect(result.usd).toBeCloseTo(400, 6);
   });
 
-  it("states its coverage in words a reader can act on", () => {
-    const partial = toNotional(
+  it("excludes a historical movement with no aligned price and counts it", () => {
+    const movements = [
+      { assetId: "asset-nvda", amount: 1, at: "2026-09-03T06:00:00.000Z" }, // priced
+      { assetId: "asset-aapl", amount: 5, at: "2026-09-03T06:00:00.000Z" }, // no series
+    ];
+    const series = prepareSeries(new Map([["asset-nvda", [pt("2026-09-03T05:58:00.000Z", 100)]]]));
+
+    const result = toNotional(movements, series);
+
+    expect(result.state).toBe("PARTIAL");
+    expect(result.usd).toBeCloseTo(100, 6); // AAPL contributed nothing
+    expect(result.transfersTotal).toBe(2);
+    expect(result.transfersPriced).toBe(1);
+    expect(result.transfersExcluded).toBe(1);
+    expect(result.coverage).toBeCloseTo(0.5, 6);
+    expect(result.excludedByReason.NO_SERIES).toBe(1);
+    expect(result.excludedAssets).toContainEqual({ assetId: "asset-aapl", reason: "NO_SERIES", movements: 1 });
+  });
+
+  it("refuses an observation older than the alignment tolerance rather than carrying it forward", () => {
+    const movements = [{ assetId: "asset-nvda", amount: 10, at: "2026-09-03T12:00:00.000Z" }];
+    const tooOld = new Date(T("2026-09-03T12:00:00.000Z") - MAX_ALIGNMENT_DELTA_MS - 1000).toISOString();
+    const series = prepareSeries(new Map([["asset-nvda", [pt(tooOld, 100)]]]));
+
+    const result = toNotional(movements, series);
+
+    expect(result.usd).toBeNull();
+    expect(result.excludedByReason.DELTA_EXCEEDED).toBe(1);
+  });
+
+  it("accepts an observation exactly at the tolerance boundary", () => {
+    const at = "2026-09-03T12:00:00.000Z";
+    const exact = new Date(T(at) - MAX_ALIGNMENT_DELTA_MS).toISOString();
+    const result = toNotional(
+      [{ assetId: "asset-nvda", amount: 1, at }],
+      prepareSeries(new Map([["asset-nvda", [pt(exact, 42)]]])),
+    );
+    expect(result.usd).toBeCloseTo(42, 6);
+    expect(result.oldestAlignmentDeltaMs).toBe(MAX_ALIGNMENT_DELTA_MS);
+  });
+
+  it("prices a transfer by an observation at the very same instant", () => {
+    const at = "2026-09-03T12:00:00.000Z";
+    const result = toNotional(
+      [{ assetId: "asset-nvda", amount: 3, at }],
+      prepareSeries(new Map([["asset-nvda", [pt(at, 10)]]])),
+    );
+    expect(result.usd).toBeCloseTo(30, 6);
+    expect(result.oldestAlignmentDeltaMs).toBe(0);
+  });
+
+  it("reports the widest gap actually used, not the tolerance", () => {
+    const series = prepareSeries(
+      new Map([["asset-nvda", [pt("2026-09-03T11:50:00.000Z", 1), pt("2026-09-03T12:59:00.000Z", 1)]]]),
+    );
+    const result = toNotional(
       [
-        { assetId: "asset-nvda", amount: 1 },
-        { assetId: "asset-usdg", amount: 1 },
+        { assetId: "asset-nvda", amount: 1, at: "2026-09-03T11:52:00.000Z" }, // 2m
+        { assetId: "asset-nvda", amount: 1, at: "2026-09-03T13:00:00.000Z" }, // 1m
       ],
-      new Map([["asset-nvda", fresh("2026-09-04T11:59:00.000Z")]]),
-      now,
+      series,
     );
-    expect(notionalNote(partial)).toContain("50%");
-    expect(notionalNote(partial)).toContain("not estimated");
+    expect(result.oldestAlignmentDeltaMs).toBe(2 * 60_000);
+    expect(result.maxAlignmentDeltaMs).toBe(MAX_ALIGNMENT_DELTA_MS);
+  });
+
+  it("excludes a movement whose own timestamp cannot be read", () => {
+    const result = toNotional(
+      [{ assetId: "asset-nvda", amount: 1, at: "not-a-date" }],
+      prepareSeries(new Map([["asset-nvda", [pt("2026-09-03T12:00:00.000Z", 100)]]])),
+    );
+    expect(result.usd).toBeNull();
+    expect(result.excludedByReason.UNDATED_MOVEMENT).toBe(1);
+  });
+
+  it("drops an unusable price point instead of pricing anything with it", () => {
+    // A zero price and an unparseable observation time are both discarded when
+    // the series is built, leaving nothing to align to.
+    const series = prepareSeries(
+      new Map([
+        [
+          "asset-nvda",
+          [pt("2026-09-03T11:59:00.000Z", 0), { price: 5, observedAt: "nonsense", source: "x" }],
+        ],
+      ]),
+    );
+    expect(series.has("asset-nvda")).toBe(false);
+    const result = toNotional([{ assetId: "asset-nvda", amount: 1, at: "2026-09-03T12:00:00.000Z" }], series);
+    expect(result.excludedByReason.NO_SERIES).toBe(1);
+  });
+
+  it("states the alignment policy it used, so the number can be checked", () => {
+    const result = toNotional(
+      [{ assetId: "asset-nvda", amount: 1, at: "2026-09-03T12:00:00.000Z" }],
+      prepareSeries(new Map([["asset-nvda", [pt("2026-09-03T11:59:00.000Z", 1)]]])),
+    );
+    expect(result.noLookAhead).toBe(true);
+    expect(notionalNote(result)).toContain("never at the current price");
+  });
+
+  it("says how many movements it covered when the total is partial", () => {
+    const result = toNotional(
+      [
+        { assetId: "asset-nvda", amount: 1, at: "2026-09-03T12:00:00.000Z" },
+        { assetId: "asset-usdg", amount: 1, at: "2026-09-03T12:00:00.000Z" },
+      ],
+      prepareSeries(new Map([["asset-nvda", [pt("2026-09-03T11:59:00.000Z", 1)]]])),
+    );
+    expect(notionalNote(result)).toContain("50%");
+    expect(notionalNote(result)).toContain("not estimated");
+  });
+
+  it("returns nothing to value for an empty window rather than a zero total", () => {
+    const result = toNotional([], prepareSeries(new Map()));
+    expect(result.usd).toBeNull();
+    expect(result.state).toBe("UNAVAILABLE");
+    expect(notionalNote(result)).toContain("nothing to value");
+  });
+});
+
+describe("alignPrice — the lookup itself", () => {
+  const series = prepareSeries(
+    new Map([
+      [
+        "a",
+        Array.from({ length: 500 }, (_, i) => ({
+          price: i + 1,
+          observedAt: new Date(Date.parse("2026-09-03T00:00:00.000Z") + i * 60_000).toISOString(),
+          source: "s",
+        })),
+      ],
+    ]),
+  ).get("a")!;
+
+  it("binary searches a long series to the correct neighbour", () => {
+    const at = Date.parse("2026-09-03T00:00:00.000Z") + 250 * 60_000 + 30_000;
+    const r = alignPrice(series, at, DEFAULT_ALIGNMENT);
+    expect("point" in r && r.point.price).toBe(251); // the 250th point, 0-indexed
+    expect("deltaMs" in r && r.deltaMs).toBe(30_000);
+  });
+
+  it("returns NO_SERIES for an asset with no observations", () => {
+    const r = alignPrice(undefined, Date.now(), DEFAULT_ALIGNMENT);
+    expect("failure" in r && r.failure).toBe("NO_SERIES");
+  });
+
+  it("returns NO_PRIOR_OBSERVATION before the series begins", () => {
+    const r = alignPrice(series, Date.parse("2026-09-02T00:00:00.000Z"), DEFAULT_ALIGNMENT);
+    expect("failure" in r && r.failure).toBe("NO_PRIOR_OBSERVATION");
   });
 });

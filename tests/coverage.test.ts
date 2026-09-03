@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { clampToServableRange, FREE_TIER_LOG_WINDOW_BLOCKS } from "@/server/market-data/providers/rpc";
-import { coverageState, coverageNote, type IndexCoverage } from "@/lib/queries";
+import { coverageState, coverageNote, coverageBlock, type IndexCoverage } from "@/lib/queries";
 import { aggregateCandles, supportedIntervals, defaultInterval } from "@/lib/ohlc";
 import { WINDOW_MS } from "@/config/site";
 
@@ -63,50 +63,108 @@ describe("clampToServableRange — never claim to have read what was refused", (
   });
 });
 
-describe("coverageState — a window that cannot span its period says PARTIAL", () => {
+describe("coverageState — zero rows over partial coverage is not EMPTY", () => {
   const now = Date.parse("2026-09-04T12:00:00.000Z");
-  const coverage = (continuousMs: number | null, gapBlocks = 0): IndexCoverage => ({
-    state: continuousMs === null ? "INDEXING" : "OK",
+  const coverage = (
+    continuousMs: number | null,
+    gapBlocks = 0,
+    lastGapAt: string | null = null,
+    state: IndexCoverage["state"] = continuousMs === null ? "INDEXING" : "OK",
+  ): IndexCoverage => ({
+    state,
     earliestBlock: 1,
     earliestAt: null,
     continuousSince: continuousMs === null ? null : new Date(now - continuousMs).toISOString(),
     continuousMs,
     gapBlocks,
-    lastGapAt: null,
+    lastGapAt,
+  });
+
+  /**
+   * The rule under test: NO DATA is not NO ACTIVITY.
+   *
+   * Zero rows is only "nothing happened" when the index is known to have
+   * covered the whole period being asked about. Any other zero is "we did not
+   * look at all of it", and saying EMPTY there is a false statement about the
+   * chain rather than about the index.
+   */
+  it("reports PARTIAL, not EMPTY, for zero rows when the index covers only 20m of a 24H window", () => {
+    expect(coverageState("24H", coverage(20 * 60_000), "EMPTY", now)).toBe("PARTIAL");
+  });
+
+  it("reports EMPTY for zero rows only when the full window is known covered", () => {
+    expect(coverageState("24H", coverage(WINDOW_MS["24H"] + 60_000), "EMPTY", now)).toBe("EMPTY");
+  });
+
+  it("reports PARTIAL for zero rows when a gap falls inside the requested window", () => {
+    const gapInside = coverage(WINDOW_MS["7D"], 4_200, new Date(now - 60 * 60_000).toISOString());
+    expect(coverageState("24H", gapInside, "EMPTY", now)).toBe("PARTIAL");
+  });
+
+  it("ignores a gap that predates the requested window", () => {
+    // A hole three days ago says nothing about the last hour.
+    const oldGap = coverage(WINDOW_MS["30D"], 4_200, new Date(now - 3 * 86_400_000).toISOString());
+    expect(coverageState("1H", oldGap, "EMPTY", now)).toBe("EMPTY");
+  });
+
+  it("treats a gap of unknown time as possibly inside the window", () => {
+    // An unplaceable hole could be anywhere, including here. Assuming it is
+    // elsewhere would be the product guessing in its own favour.
+    const unplaceable = coverage(WINDOW_MS["30D"], 900, null);
+    expect(coverageState("1H", unplaceable, "EMPTY", now)).toBe("PARTIAL");
   });
 
   it("downgrades OK to PARTIAL when the index reaches back less far than the window", () => {
-    // Forty minutes of index cannot support a 7D claim.
-    expect(coverageState("7D", coverage(40 * 60_000), "OK")).toBe("PARTIAL");
+    expect(coverageState("7D", coverage(40 * 60_000), "OK", now)).toBe("PARTIAL");
   });
 
-  it("leaves the state alone when the index covers the whole window", () => {
-    expect(coverageState("24H", coverage(WINDOW_MS["24H"] + 60_000), "OK")).toBe("OK");
+  it("leaves OK alone when the index covers the whole window with no gap", () => {
+    expect(coverageState("24H", coverage(WINDOW_MS["24H"] + 60_000), "OK", now)).toBe("OK");
   });
 
-  it("does not upgrade UNAVAILABLE just because coverage is good", () => {
-    expect(coverageState("24H", coverage(WINDOW_MS["7D"]), "UNAVAILABLE")).toBe("UNAVAILABLE");
+  it("reports UNAVAILABLE when storage is unreachable, whatever coverage says", () => {
+    expect(coverageState("24H", coverage(WINDOW_MS["7D"]), "UNAVAILABLE", now)).toBe("UNAVAILABLE");
+    expect(coverageState("24H", coverage(null, 0, null, "UNAVAILABLE"), "EMPTY", now)).toBe("UNAVAILABLE");
   });
 
-  it("leaves the state alone when coverage is unknown rather than guessing either way", () => {
-    // An unmigrated deployment must not be forced to PARTIAL on no evidence,
-    // and must not be allowed to claim OK on no evidence either.
-    expect(coverageState("7D", coverage(null), "OK")).toBe("OK");
+  it("reports INDEXING for zero rows when coverage has not been recorded", () => {
+    // Unrecorded coverage plus zero rows is unreadable — it could be no
+    // activity or no indexing. INDEXING says which of those we know: neither.
+    expect(coverageState("24H", coverage(null), "EMPTY", now)).toBe("INDEXING");
+  });
+
+  it("reports PARTIAL for rows that exist while coverage is unrecorded", () => {
+    // The rows are real, but the window still cannot prove it spans its period.
+    expect(coverageState("7D", coverage(null), "OK", now)).toBe("PARTIAL");
   });
 
   it("writes a note that states the actual reach, not just that something is wrong", () => {
-    const note = coverageNote("7D", coverage(90 * 60_000))!;
+    const note = coverageNote("7D", coverage(90 * 60_000), now)!;
     expect(note).toContain("1.5h");
     expect(note).toContain("lower bound");
   });
 
-  it("stays silent when coverage is complete and there is nothing to disclose", () => {
-    expect(coverageNote("24H", coverage(WINDOW_MS["7D"]))).toBeNull();
+  it("says a zero here is not a zero on chain when coverage is unrecorded", () => {
+    const note = coverageNote("24H", coverage(null), now)!;
+    expect(note).toContain("not that nothing happened");
   });
 
-  it("still discloses skipped blocks even when the window is otherwise covered", () => {
-    const note = coverageNote("24H", coverage(WINDOW_MS["7D"], 4_200));
+  it("stays silent when coverage is complete and there is nothing to disclose", () => {
+    expect(coverageNote("24H", coverage(WINDOW_MS["7D"]), now)).toBeNull();
+  });
+
+  it("discloses a gap that falls inside an otherwise covered window", () => {
+    const gapInside = coverage(WINDOW_MS["7D"], 4_200, new Date(now - 60 * 60_000).toISOString());
+    const note = coverageNote("24H", gapInside, now)!;
     expect(note).toContain("4200");
+    expect(note).toContain("lower bound");
+  });
+
+  it("does not call a window covered when a gap sits inside it", () => {
+    const gapInside = coverage(WINDOW_MS["7D"], 4_200, new Date(now - 60 * 60_000).toISOString());
+    const block = coverageBlock("24H", gapInside, now);
+    expect(block.covers_window).toBe(false);
+    expect(block.gap_inside_window).toBe(true);
   });
 });
 

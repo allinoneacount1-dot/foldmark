@@ -426,9 +426,14 @@ export const LIMITATIONS: { title: string; detail: string }[] = [
       "One NVDA plus one AAPL plus one USDG is not three of anything. Any figure spanning several assets is therefore a count — transfers, counterparties, assets touched — or a USD notional conversion. Amounts appear only beside their own symbol, and cross-asset rankings use counts, which are comparable.",
   },
   {
-    title: "Notional value is partial, and says so",
+    title: "Notional value is priced at the moment of each transfer",
     detail:
-      "A USD total is only computed from assets FOLDMARK observed a price for within the last 15 minutes. Assets without one are excluded by name and the total is marked PARTIAL with its coverage stated. A stale quote is never carried forward to complete a sum.",
+      "A USD total values every transfer at a price observed at or before that transfer, within 15 minutes of it — never at the current quote. Pricing a day-old transfer with a two-minute-old quote would look like a measurement and describe nothing that happened. Transfers with no such price are excluded and counted, and the total is marked PARTIAL with the number of transfers priced against the number observed.",
+  },
+  {
+    title: "Notional coverage depends on how often prices are ingested",
+    detail:
+      "A transfer can only be priced if an observation exists near it in time. The scheduled route runs once a day, which is far too sparse to price a live window, so meaningful notional coverage requires the continuous head-follower (scripts/live-indexer.mjs) to be running — it refreshes prices on every block it ingests. Without it, most transfers are correctly reported as unpriced rather than valued at a distant quote.",
   },
   {
     title: "An index window can be shorter than its label",

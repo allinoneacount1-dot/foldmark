@@ -88,3 +88,48 @@ Adds:
    a provider call and the product's cost scales with its audience. One
    scheduled process writes here; every page and API route selects from it and
    reaches no network at all.
+
+## 20260905_pair_key_and_provenance.sql + 20260905_pair_key_unique.sql
+
+Two files, deliberately. They fix one defect and the split exists because
+applying the second half early breaks writes.
+
+**The defect.** `price_observations_identity` includes the nullable column
+`pair_address`. Postgres treats two NULLs as distinct values, so that constraint
+permits unlimited duplicates for any observation with no pair — which is every
+observation GeckoTerminal's multi-token endpoint produces. Deduplication existed
+only in application memory, and memory does not survive a retry, a restart, or a
+second instance.
+
+`pair_key` is the same fact with no NULL in it: the pair address, or the empty
+string. It is a plain column, not `GENERATED` — a generated column is not
+insertable, and PostgREST cannot name one in an `ON CONFLICT` target.
+
+**Why the split.** PostgREST turns `on_conflict=…,pair_address` into
+`ON CONFLICT (…, pair_address) DO NOTHING`, which handles a conflict on *that*
+constraint only. Once the new unique index exists, a duplicate with a NULL pair
+conflicts on the *new* index, which the clause does not cover, and Postgres
+raises `23505` instead of skipping the row. Code that predates `pair_key` would
+stop being able to write prices.
+
+**Order:**
+
+1. Deploy the code that sends `pair_key`. Safe with or without the migration —
+   it falls back to the legacy identity when the column is absent and reports
+   `identityMode: "LEGACY_NULLABLE"` so the weakened state is visible rather
+   than silent.
+2. Apply `20260905_pair_key_and_provenance.sql`. Safe with any code: it adds a
+   defaulted column, backfills it, indexes the provenance link, and reports any
+   duplicates it found.
+3. Apply `20260905_pair_key_unique.sql`. Requires step 1 to be live.
+
+Neither file deletes a row. The unique index refuses to create itself over
+existing duplicates and says how many it found, because removing recorded
+observations to make an index fit is destroying evidence to satisfy a schema.
+
+**Provenance.** `canonical_prices.source_observation_id` was declared by the
+20260904 migration and never written. It is now populated with the id of the
+exact raw row the reconciliation selected, so a past canonical decision can be
+audited rather than merely described. When the raw row was already stored and
+did not come back from the insert, the canonical row is still written with a
+null link — a missing pointer is a smaller loss than a missing price.

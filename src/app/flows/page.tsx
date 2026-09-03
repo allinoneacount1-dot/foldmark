@@ -12,12 +12,14 @@ import {
   foldEdges,
   foldByAddress,
   dominantFlow,
-  getLatestPrices,
+  getPriceSeries,
+  movementsFrom,
+  since,
   requestNow,
 } from "@/lib/queries";
 import { compact, integer, shortAddress, signed } from "@/lib/format";
 import { WINDOWS, CHAIN, type FlowWindow } from "@/config/site";
-import { toNotional, notionalNote } from "@/lib/notional";
+import { toNotional, notionalNote, prepareSeries, DEFAULT_ALIGNMENT } from "@/lib/notional";
 
 export const metadata: Metadata = {
   title: "Capital flow",
@@ -92,17 +94,18 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
   /**
    * The one figure that legitimately spans assets.
    *
-   * Notional value is comparable because it has a unit — USD — so it is the
-   * honest answer to "how much moved". It exists only where FOLDMARK observed a
-   * price recently enough for the multiplication to hold; assets without one
-   * are excluded and counted rather than estimated, and the panel says so.
+   * Notional value is comparable because it has a unit — USD. But a total is
+   * only honest if each transfer was valued at the price that held when it
+   * happened, so every transfer is aligned to an observation at or before its
+   * own timestamp. Transfers with no such observation are excluded and counted;
+   * none of them is priced at today's quote.
    */
-  const prices = await getLatestPrices(assets.map((a) => a.id));
-  const notional = toNotional(
-    edges.filter((e) => e.assetId).map((e) => ({ assetId: e.assetId!, amount: e.amount })),
-    prices,
-    now,
+  const priceRows = await getPriceSeries(
+    assets.map((a) => a.id),
+    since(window, now),
+    DEFAULT_ALIGNMENT.maxAlignmentDeltaMs,
   );
+  const notional = toNotional(movementsFrom(activity.rows, assets), prepareSeries(priceRows));
 
   // Assets ranked by transfers observed — a count, so the comparison holds.
   // Each asset's own moved amount is carried alongside, in its own units.
@@ -147,10 +150,10 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
               "NOTIONAL MOVED",
               notional.usd !== null ? `${compact(notional.usd)}` : null,
               notional.state === "PARTIAL"
-                ? `USD · ${Math.round(notional.coverage * 100)}% OF ASSETS PRICED`
+                ? `USD · ${Math.round(notional.coverage * 100)}% OF TRANSFERS PRICED`
                 : notional.state === "OK"
-                  ? "USD · ALL ASSETS PRICED"
-                  : "NO FRESH PRICE",
+                  ? "USD · EVERY TRANSFER PRICED"
+                  : "NO ALIGNED PRICE",
             ],
             ["TRANSFERS", activity.transfers ? integer(activity.transfers) : null, window],
             ["DIRECTED EDGES", activity.uniquePairs ? integer(activity.uniquePairs) : null, "ADDRESS PAIRS"],
@@ -296,8 +299,8 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                   )}
                   <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
                     {notionalNote(notional)}
-                    {notional.oldestPriceAgeMs !== null
-                      ? ` Oldest quote used: ${Math.round(notional.oldestPriceAgeMs / 60_000)}m old.`
+                    {notional.oldestAlignmentDeltaMs !== null
+                      ? ` Widest gap between a transfer and the price used for it: ${Math.round(notional.oldestAlignmentDeltaMs / 60_000)}m.`
                       : ""}
                   </p>
                 </Panel>

@@ -15,6 +15,7 @@ import { ROBINHOOD_CHAIN, getPulse } from "@/lib/chain";
 import { WINDOW_MS, type FlowWindow, type AssetType } from "@/config/site";
 import { fromBaseUnits } from "@/lib/format";
 import { type DataState, type Measured, indexing, measured, unavailable } from "@/lib/data-state";
+import type { Movement } from "@/lib/notional";
 
 const RPC = { source: "Robinhood Chain RPC", method: "eth_blockNumber on chain 4663" };
 const DB = {
@@ -290,24 +291,75 @@ export async function getIndexCoverage(now: number): Promise<IndexCoverage> {
  * than the index holds is PARTIAL — every count inside it is a lower bound over
  * a shorter period than its own label claims.
  */
-export function coverageState(window: FlowWindow, coverage: IndexCoverage, base: DataState): DataState {
-  if (base === "UNAVAILABLE" || base === "EMPTY") return base;
-  if (coverage.state === "UNAVAILABLE") return base;
-  // Unknown coverage cannot upgrade or downgrade a result on its own.
-  if (coverage.continuousMs === null) return base;
-  if (coverage.continuousMs >= WINDOW_MS[window]) return base;
-  return "PARTIAL";
+export function coverageState(
+  window: FlowWindow,
+  coverage: IndexCoverage,
+  base: DataState,
+  now: number,
+): DataState {
+  const windowMs = WINDOW_MS[window];
+
+  // Storage is unreachable. Nothing can be said about coverage or activity.
+  if (base === "UNAVAILABLE" || coverage.state === "UNAVAILABLE") return "UNAVAILABLE";
+
+  /**
+   * Coverage has not been recorded yet.
+   *
+   * Zero rows here is unreadable: it could mean nothing happened, or it could
+   * mean nothing has been indexed. INDEXING says which of those we know, which
+   * is neither. Rows that DO exist are real, but the window still cannot prove
+   * it spans its own period, so it is PARTIAL rather than OK.
+   */
+  if (coverage.continuousMs === null) {
+    return base === "EMPTY" ? "INDEXING" : "PARTIAL";
+  }
+
+  // The index does not reach back as far as the label claims. Every figure
+  // inside it — including a count of zero — describes a shorter period.
+  if (coverage.continuousMs < windowMs) return "PARTIAL";
+
+  // A hole inside the requested window means the window is not whole, however
+  // far back the index reaches on either side of it.
+  if (gapInsideWindow(coverage, windowMs, now)) return "PARTIAL";
+
+  // The full window is known covered and unbroken. Only now does zero rows
+  // genuinely mean zero activity.
+  return base;
+}
+
+/**
+ * Whether a known gap falls inside the requested window.
+ *
+ * A gap from three days ago says nothing about the last hour, so the check is
+ * time-scoped. When the index knows it skipped blocks but not when, the answer
+ * is yes: an unplaceable hole could be anywhere, including here, and assuming
+ * otherwise would be the product guessing in its own favour.
+ */
+function gapInsideWindow(coverage: IndexCoverage, windowMs: number, now: number): boolean {
+  if (coverage.gapBlocks <= 0) return false;
+  if (!coverage.lastGapAt) return true;
+  const at = Date.parse(coverage.lastGapAt);
+  if (Number.isNaN(at)) return true;
+  return at >= now - windowMs;
 }
 
 /** Human sentence for a window whose index does not reach back far enough. */
-export function coverageNote(window: FlowWindow, coverage: IndexCoverage): string | null {
+export function coverageNote(window: FlowWindow, coverage: IndexCoverage, now: number): string | null {
+  if (coverage.state === "UNAVAILABLE") return null;
+
   if (coverage.continuousMs === null) {
-    return "Index coverage is not recorded yet, so this window cannot confirm it spans its full period.";
+    return "Index coverage is not recorded yet, so this window cannot confirm it spans its full period. A count of zero here means nothing was found in what has been indexed — not that nothing happened.";
+  }
+
+  if (coverage.continuousMs >= WINDOW_MS[window] && gapInsideWindow(coverage, WINDOW_MS[window], now)) {
+    return `The index spans this ${window} window but skipped ${coverage.gapBlocks} block(s) inside it, so figures here are a lower bound.`;
   }
   const gap = coverage.gapBlocks > 0 ? ` ${coverage.gapBlocks} block(s) were skipped and are not included.` : "";
   if (coverage.continuousMs >= WINDOW_MS[window]) {
     return coverage.gapBlocks > 0 ? `Index covers the full ${window} window.${gap}` : null;
   }
+  // Below here the index is shorter than the window, so the sentence must say
+  // by how much — a reader cannot judge "PARTIAL" without the actual reach.
   const hours = coverage.continuousMs / 3_600_000;
   const reach = hours >= 1 ? `${hours.toFixed(1)}h` : `${Math.round(coverage.continuousMs / 60_000)}m`;
   return `The index reaches back ${reach} unbroken, less than this ${window} window. Every figure here covers that shorter period and is a lower bound, not a ${window} total.${gap}`;
@@ -352,8 +404,9 @@ export async function getWindowActivity(window: FlowWindow, now: number): Promis
   }
 
   return {
-    // A window shorter than its own label is PARTIAL, whatever the row count says.
-    state: coverageState(window, coverage, state),
+    // A window shorter than its own label is PARTIAL, whatever the row count
+    // says — including when it says zero.
+    state: coverageState(window, coverage, state, now),
     window,
     transfers: rows.length,
     activeAddresses: addresses.size,
@@ -364,7 +417,7 @@ export async function getWindowActivity(window: FlowWindow, now: number): Promis
     bucketMinutes: Math.round(span / BUCKETS / 60000),
     rows,
     coverage,
-    coverageNote: coverageNote(window, coverage),
+    coverageNote: coverageNote(window, coverage, now),
   };
 }
 
@@ -803,8 +856,13 @@ export async function getFlowWindows(
  * index only reaches back two hours unless the response says so. This is that
  * sentence, in a shape a machine can act on.
  */
-export function coverageBlock(window: FlowWindow, coverage: IndexCoverage) {
-  const complete = coverage.continuousMs !== null && coverage.continuousMs >= WINDOW_MS[window];
+export function coverageBlock(window: FlowWindow, coverage: IndexCoverage, now: number) {
+  const windowMs = WINDOW_MS[window];
+  const spans = coverage.continuousMs !== null && coverage.continuousMs >= windowMs;
+  const holed = gapInsideWindow(coverage, windowMs, now);
+  // Covering the window requires BOTH reaching back far enough and having no
+  // hole inside it. Either one alone is not coverage.
+  const complete = spans && !holed;
   return {
     state: coverage.state,
     /** False when the index reaches back less far than the window asks for. */
@@ -816,6 +874,109 @@ export function coverageBlock(window: FlowWindow, coverage: IndexCoverage) {
     coverage_duration_ms: coverage.continuousMs,
     gap_blocks: coverage.gapBlocks,
     last_gap_at: coverage.lastGapAt,
-    note: coverageNote(window, coverage),
+    /** True when a skipped range falls inside this window specifically. */
+    gap_inside_window: holed,
+    note: coverageNote(window, coverage, now),
+  };
+}
+
+/**
+ * Price observations per asset across a window, for point-in-time valuation.
+ *
+ * Deliberately not "the latest price". Valuing a 24H window needs the price as
+ * it was at each moment inside it, so this returns the whole series.
+ *
+ * The series starts BEFORE the window does, by the alignment tolerance. A
+ * transfer in the first minute of the window can only be priced by an
+ * observation from before the window opened; without that lead-in the earliest
+ * transfers would be unpriceable for no reason other than where the query
+ * happened to start.
+ *
+ * Reads canonical_prices — the reconciled series — and falls back to the legacy
+ * `prices` table for deployments whose migration has not run.
+ */
+export async function getPriceSeries(
+  assetIds: string[],
+  windowStartIso: string,
+  leadInMs: number,
+): Promise<Map<string, PriceObservation[]>> {
+  const out = new Map<string, PriceObservation[]>();
+  const client = db();
+  if (!client || !assetIds.length) return out;
+
+  const startMs = Date.parse(windowStartIso);
+  const fromIso = Number.isNaN(startMs) ? windowStartIso : new Date(startMs - leadInMs).toISOString();
+
+  const read = async (table: "canonical_prices" | "prices") => {
+    const { data, error } = await client
+      .from(table)
+      .select("asset_id, price, source, observed_at")
+      .in("asset_id", assetIds)
+      .gte("observed_at", fromIso)
+      .order("observed_at", { ascending: true })
+      .limit(10000);
+    if (error || !data) return 0;
+    for (const row of data as { asset_id: string; price: number; source: string; observed_at: string }[]) {
+      const list = out.get(row.asset_id) ?? [];
+      list.push({ price: Number(row.price), source: row.source, observedAt: row.observed_at });
+      out.set(row.asset_id, list);
+    }
+    return data.length;
+  };
+
+  const canonical = await read("canonical_prices");
+  if (canonical === 0) await read("prices");
+  return out;
+}
+
+/**
+ * Raw transfers as priceable movements.
+ *
+ * Each transfer keeps its OWN timestamp. Folding transfers into edges first
+ * would sum the amounts and throw those timestamps away, which is what forced
+ * the whole window to be valued at one price. A movement has to remember when
+ * it happened or it cannot be priced at that moment.
+ */
+export function movementsFrom(rows: TransferRow[], assets: AssetRow[]): Movement[] {
+  const decimals = new Map(assets.map((a) => [a.id, a.decimals]));
+  return rows.map((r) => {
+    // Every transfer becomes a movement, including the ones that cannot be
+    // priced. Skipping them here would remove them from the denominator and
+    // make the reported coverage describe a smaller population than the window
+    // actually held.
+    const d = r.asset_id ? decimals.get(r.asset_id) : undefined;
+    return {
+      assetId: r.asset_id,
+      // fromBaseUnits falls back to 0 rather than NaN on an unparseable amount,
+      // so an unknown scale has to be represented as null here — a silent 0
+      // would be counted as a priced movement worth nothing.
+      amount: d === undefined ? null : fromBaseUnits(r.amount, d),
+      at: r.timestamp,
+    };
+  });
+}
+
+/**
+ * One precomputed flow row as the API publishes it.
+ *
+ * Extracted so the rule can be tested directly: an amount is never emitted
+ * without the asset it counts. A net_flow of -420 is not a fact — "-420 USDG"
+ * is. The row is stored per address AND asset precisely so this can be true,
+ * and this is where that pairing survives into the response.
+ */
+export function describeFlowRow(row: FlowWindowRow, symbols: Map<string, string>) {
+  const symbol = row.asset_id ? (symbols.get(row.asset_id) ?? null) : null;
+  return {
+    // The address alone. The storage key is `<address>:<asset_id>`, which is an
+    // implementation detail and is not a resolvable address.
+    address: row.address,
+    asset: row.asset_id ? { id: row.asset_id, symbol } : null,
+    inflow: row.inflow,
+    outflow: row.outflow,
+    net_flow: row.net_flow,
+    unit: symbol,
+    transfers: row.transaction_count,
+    counterparties: row.unique_counterparties,
+    calculated_at: row.calculated_at,
   };
 }
