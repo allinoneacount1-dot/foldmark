@@ -129,6 +129,10 @@ create table if not exists protocols (
   name text not null,
   category text,
   description text,
+  website text,
+  -- Same rule as assets: a protocol is verified when someone confirmed its
+  -- contracts, not when it was typed into a registry.
+  verified boolean not null default false,
   created_at timestamptz not null default now()
 );
 

@@ -62,9 +62,9 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
           <p className="label-s">ASSET PASSPORT · CHAIN {CHAIN.id}</p>
           <h1 className="mt-3 font-mono text-[1.25rem] break-all text-ink">{contract}</h1>
           <Panel className="mt-6">
-            <PanelHeader title="NOT IN THE INDEX" state="INDEXING" />
+            <PanelHeader title="NOT IN THE INDEX" state="INDEXING" surface="registry" />
             <div className="flex flex-col items-start gap-3 px-4 py-8">
-              <StateTag state="INDEXING" />
+              <StateTag state="INDEXING" surface="registry" />
               <p className="font-display text-[1.5rem] text-ink">This contract has not been observed</p>
               <p className="measure text-body-s text-ink-muted">
                 FOLDMARK indexes a contract once it emits an ERC-20 Transfer that the indexer reaches. That this address
@@ -109,33 +109,41 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
         : indexing(INDEX)
       : measured(value, INDEX, { observedAt: indexer.updatedAt, state: state.capped ? "PARTIAL" : "OK" });
 
+  // Each row says what kind of thing is missing from it: a transfer count that
+  // has not been indexed and a price that has never been quoted are one state
+  // to the machine and two different sentences to a reader.
   const matrixRows: MatrixRow[] = [
     {
       label: "TRANSFERS",
       source: "Transfer logs",
+      surface: "activity",
       cells: windowRows.map((r) => cell(r.folded?.transfers ?? (r.state === "EMPTY" ? 0 : null), r)),
       format: (v) => integer(Number(v)),
     },
     {
       label: "GROSS VOLUME",
       source: "Token units",
+      surface: "activity",
       cells: windowRows.map((r) => cell(r.folded?.volume ?? (r.state === "EMPTY" ? 0 : null), r)),
       format: (v) => compact(Number(v)),
     },
     {
       label: "COUNTERPARTIES",
       source: "Distinct addresses",
+      surface: "flow",
       cells: windowRows.map((r) => cell(r.folded?.counterparties ?? (r.state === "EMPTY" ? 0 : null), r)),
       format: (v) => integer(Number(v)),
     },
     {
       label: "PRICE",
       source: "No oracle wired to chain " + CHAIN.id,
+      surface: "price",
       cells: WINDOWS.map(() => unavailable<number | string>(ORACLE)),
     },
     {
       label: "LIQUIDITY",
       source: "No DEX pool identified",
+      surface: "liquidity",
       cells: WINDOWS.map(() => unavailable<number | string>({ source: "DEX pool registry" })),
     },
   ];
@@ -186,11 +194,18 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
                 : unavailable<number>(ORACLE)
           }
           format={(v) => `$${compact(Number(v), 4)}`}
+          surface="price"
         />
-        <TapeCell label="TRANSFERS 24H" measurement={cell(windowRows[2].folded?.transfers ?? 0, windowRows[2])} format={(v) => integer(Number(v))} />
-        <TapeCell label="GROSS VOLUME 24H" measurement={cell(windowRows[2].folded?.volume ?? 0, windowRows[2])} format={(v) => compact(Number(v))} />
-        <TapeCell label="COUNTERPARTIES 24H" measurement={cell(windowRows[2].folded?.counterparties ?? 0, windowRows[2])} format={(v) => integer(Number(v))} />
-        <TapeCell label="INDEXED TO" measurement={withFreshness(indexer.lastProcessedBlock, now)} format={(v) => blockLabel(Number(v))} />
+        {/*
+          No `?? 0`. cell() already turns an absent value into INDEXING or
+          UNAVAILABLE; defaulting to zero first would walk straight past that and
+          publish a fabricated zero as a measurement, which is the one thing a
+          tape of numbers must never do.
+        */}
+        <TapeCell label="TRANSFERS 24H" surface="activity" measurement={cell(windowRows[2].folded?.transfers, windowRows[2])} format={(v) => integer(Number(v))} />
+        <TapeCell label="GROSS VOLUME 24H" surface="activity" measurement={cell(windowRows[2].folded?.volume, windowRows[2])} format={(v) => compact(Number(v))} />
+        <TapeCell label="COUNTERPARTIES 24H" surface="flow" measurement={cell(windowRows[2].folded?.counterparties, windowRows[2])} format={(v) => integer(Number(v))} />
+        <TapeCell label="INDEXED TO" surface="network" measurement={withFreshness(indexer.lastProcessedBlock, now)} format={(v) => blockLabel(Number(v))} />
         <TapeStatic label="DECIMALS" value={String(asset.decimals)} />
         <TapeStatic label="UPDATED" value={relativeTime(indexer.updatedAt, now)} />
       </Tape>
@@ -235,10 +250,17 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
           <Figure
             index="01"
             caption={
-              <>
-                {asset.symbol} asset graph over 7D — {integer(graph.shown.nodes)} nodes, {integer(graph.shown.edges)}{" "}
-                relationships from {integer(graph.totals.transfers)} transfers.
-              </>
+              // A caption counting nodes is a claim about what was observed. With
+              // nothing observed it would read "0 nodes, 0 relationships from 0
+              // transfers", which asserts an empty market rather than an empty index.
+              graph.shown.nodes > 0 ? (
+                <>
+                  {asset.symbol} asset graph over 7D — {integer(graph.shown.nodes)} nodes,{" "}
+                  {integer(graph.shown.edges)} relationships from {integer(graph.totals.transfers)} transfers.
+                </>
+              ) : (
+                <>{asset.symbol} asset graph over 7D.</>
+              )
             }
             provenance="ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS INDEXED BY FOLDMARK"
           >
@@ -292,7 +314,7 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
                   ) : (
                     <LedgerEmpty
                       state={window7d.state}
-                      title="No counterparty observed in 7D"
+                      surface="flow"
                       detail="Addresses appear here once they send or receive this asset within the window."
                     />
                   )}

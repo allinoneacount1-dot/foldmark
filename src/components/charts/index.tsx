@@ -13,6 +13,9 @@
 
 import { compact, integer } from "@/lib/format";
 
+/** The instrument with no signal: frame, grid and axes, drawn without a series. */
+export { ChartFrame, EmptyChartSurface } from "./ChartSurface";
+
 /* ------------------------------------------------------------- sparkline */
 
 export function Sparkline({
@@ -28,8 +31,21 @@ export function Sparkline({
   tone?: "ink" | "signal" | "muted";
   label?: string;
 }) {
+  // Fewer than two observations is not a line. The slot keeps its baseline and
+  // holds a dash, the same way a metric does — it occupies the space without
+  // asserting a shape.
   if (series.length < 2) {
-    return <div className="h-8 w-full border-b border-rule-faint" role="presentation" />;
+    return (
+      <div
+        className="flex h-8 w-full items-center justify-center border-b border-rule-faint"
+        role="img"
+        aria-label={label ? `${label}: no series observed` : "No series observed"}
+      >
+        <span aria-hidden className="font-mono text-label-s leading-none text-ink-faint/70">
+          &mdash;
+        </span>
+      </div>
+    );
   }
 
   const max = Math.max(...series);

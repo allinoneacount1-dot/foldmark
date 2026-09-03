@@ -59,6 +59,7 @@ export default async function WalletsPage() {
           aside={
             <StateTag
               state={walletCount.state}
+              surface="wallet"
               label={walletCount.value !== null ? `${integer(walletCount.value)} OBSERVED` : undefined}
             />
           }
@@ -114,8 +115,16 @@ export default async function WalletsPage() {
                   ) : (
                     <LedgerEmpty
                       state={activity.state}
-                      title="No address active in the last 24 hours"
-                      detail="Addresses appear here as soon as the indexer observes a transfer involving them."
+                      surface="wallet"
+                      /* An observed-and-quiet 24 hours is a finding about the
+                         chain and is stated as one. A window the index has not
+                         reached is not, and the wallet surface says so. */
+                      title={activity.state === "EMPTY" ? "No address active in the last 24 hours" : undefined}
+                      detail={
+                        activity.state === "EMPTY"
+                          ? "Addresses appear here as soon as the indexer observes a transfer involving them."
+                          : undefined
+                      }
                     />
                   )}
                 </Ledger>
@@ -134,6 +143,7 @@ export default async function WalletsPage() {
                     title="RECENTLY SEEN"
                     meta="BY LAST ACTIVITY"
                     state={observed.rows.length ? observed.state : "INDEXING"}
+                    surface="wallet"
                   />
                   {observed.rows.length ? (
                     <ul className="max-h-[22rem] overflow-y-auto">
@@ -154,8 +164,13 @@ export default async function WalletsPage() {
                   ) : (
                     <EmptyState
                       state={observed.state}
-                      title="No wallet observed yet"
-                      detail="The wallet table is populated by the indexer from transfer participants."
+                      surface="wallet"
+                      title={observed.state === "EMPTY" ? "No wallet observed yet" : undefined}
+                      detail={
+                        observed.state === "EMPTY"
+                          ? "The wallet table is populated by the indexer from transfer participants."
+                          : undefined
+                      }
                     />
                   )}
                 </Panel>

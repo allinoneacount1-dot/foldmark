@@ -2,11 +2,14 @@ import type { Metadata } from "next";
 import { TopologyView } from "@/components/graph/TopologyView";
 import { RailColumn } from "@/components/layout/Frame";
 import { ChipLink, ChipGroup } from "@/components/ui/controls";
+import { StateTag } from "@/components/ui/primitives";
 import { CapitalFlowModule, NetworkActivityModule, TopFlowsModule } from "@/components/intelligence/rail";
 import { getAssets, getWindowActivity, foldEdges, requestNow, type WindowActivity,
 } from "@/lib/queries";
 import { buildMarketGraph } from "@/lib/graph";
 import { integer } from "@/lib/format";
+import type { DataState } from "@/lib/data-state";
+import { presentLabel } from "@/lib/presentation-state";
 import { ASSET_TYPE_LABEL, ASSET_TYPES, WINDOWS, CHAIN, type AssetType, type FlowWindow } from "@/config/site";
 
 export const metadata: Metadata = {
@@ -42,6 +45,26 @@ export default async function FabricPage({
 
   const graph = buildMarketGraph(rows, assets, { limitAddresses: 12, limitAssets: 10 });
   const edges = foldEdges(rows, assets, 10);
+
+  // The map is drawn from observed transfers, so the transfer state is the one
+  // the canvas, the legend and the tape all speak.
+  const topology: DataState = filtered.state;
+  const drawn = graph.nodes.length > 0;
+  /**
+   * Whether the counters are entitled to show a number.
+   *
+   * A count is a measurement. "0 NODES" says we looked at the chain and found
+   * nothing, which is a claim an index that was never queried cannot make — so
+   * an unobserved window gets an em dash in the slot instead of a zero.
+   */
+  const counted = topology !== "UNAVAILABLE" && topology !== "INDEXING";
+  /**
+   * The chip tone. UNAVAILABLE renders in the negative colour and reads as a
+   * failure, while to a reader it says exactly what INDEXING says: not observed
+   * yet. The chip therefore shows the pending state. Nothing downstream of this
+   * changes — the API, /docs and every internal decision still see UNAVAILABLE.
+   */
+  const chipState: DataState = topology === "UNAVAILABLE" ? "INDEXING" : topology;
 
   const href = (next: Partial<{ w: string; type: string | undefined }>) => {
     const sp = new URLSearchParams();
@@ -80,9 +103,21 @@ export default async function FabricPage({
             ))}
           </ChipGroup>
 
-          <p className="label-s ml-auto shrink-0 text-ink-faint">
-            {integer(graph.shown.nodes)} NODES · {integer(graph.shown.edges)} EDGES · {integer(graph.totals.transfers)} TX
-          </p>
+          <div className="ml-auto flex shrink-0 items-center gap-3">
+            <p className="label-s text-ink-faint">
+              {counted ? (
+                <>
+                  {integer(graph.shown.nodes)} NODES · {integer(graph.shown.edges)} EDGES ·{" "}
+                  {integer(graph.totals.transfers)} TX
+                </>
+              ) : (
+                <>
+                  <Absent /> NODES · <Absent /> EDGES · <Absent /> TX
+                </>
+              )}
+            </p>
+            {counted ? null : <StateTag state={chipState} surface="topology" />}
+          </div>
         </div>
       </div>
 
@@ -92,14 +127,19 @@ export default async function FabricPage({
           <div className="flex h-[24rem] min-h-0 shrink-0 sm:h-[30rem] lg:h-auto lg:flex-1">
             <TopologyView
               graph={graph}
+              state={topology}
               emptyHint={
-                typeFilter
-                  ? `No ${ASSET_TYPE_LABEL[typeFilter]} transfer was observed in the ${window} window. Widen the window or clear the filter.`
-                  : `No transfer was observed in the ${window} window. The map draws itself as soon as value moves.`
+                // Only claim an observed absence when the window was actually
+                // covered. Otherwise the canvas says what the surface says.
+                counted
+                  ? typeFilter
+                    ? `No ${ASSET_TYPE_LABEL[typeFilter]} transfer was observed in the ${window} window. Widen the window or clear the filter.`
+                    : `No transfer was observed in the ${window} window. The map draws itself as soon as value moves.`
+                  : undefined
               }
             />
           </div>
-          <Legend graph={graph} window={window} state={assetsResult.state} />
+          <Legend graph={graph} window={window} state={topology} drawn={drawn} />
         </div>
 
         <RailColumn revision={`${window}:${typeFilter ?? "all"}`} className="lg:!static lg:max-h-none lg:overflow-visible">
@@ -111,6 +151,20 @@ export default async function FabricPage({
         </RailColumn>
       </div>
     </div>
+  );
+}
+
+/**
+ * The slot where a count would be.
+ *
+ * An em dash, not a zero and not a faint number. It holds the shape of the tape
+ * so the layout reads finished, and asserts nothing.
+ */
+function Absent() {
+  return (
+    <span aria-hidden className="text-ink-dim">
+      &mdash;
+    </span>
   );
 }
 
@@ -141,22 +195,38 @@ function recount(base: WindowActivity, rows: WindowActivity["rows"], now: number
     activeAssets: assets.size,
     uniquePairs: pairs.size,
     buckets,
-    state: rows.length ? base.state : "EMPTY",
+    // A filter that removes every row is a genuine EMPTY — but only when there
+    // was something to filter. If the base window was never observed, the
+    // filtered view is just as unobserved, and calling it EMPTY would claim we
+    // looked and found nothing.
+    state: rows.length ? base.state : observed(base.state) ? "EMPTY" : base.state,
   };
+}
+
+/** True when the state means the index actually answered. */
+function observed(state: DataState): boolean {
+  return state === "OK" || state === "PARTIAL" || state === "STALE" || state === "EMPTY";
 }
 
 /**
  * The legend is generated from the graph it describes, so it cannot document an
  * encoding the renderer does not implement.
+ *
+ * With nothing drawn it keeps its place and documents the encoding in the
+ * abstract — position, radius, edge weight and ring are properties of the
+ * renderer, true before a single node exists. What it drops in that state is
+ * every count, because a count is a measurement and there is none.
  */
 function Legend({
   graph,
   window,
   state,
+  drawn,
 }: {
   graph: ReturnType<typeof buildMarketGraph>;
   window: FlowWindow;
-  state: string;
+  state: DataState;
+  drawn: boolean;
 }) {
   const assets = graph.nodes.filter((n) => n.kind === "asset").length;
   const sources = graph.nodes.filter((n) => n.kind === "source").length;
@@ -166,12 +236,30 @@ function Legend({
   return (
     <div className="shrink-0 border-t border-rule bg-void">
       <dl className="shell grid grid-cols-2 gap-x-6 gap-y-1.5 py-2.5 sm:flex sm:flex-wrap sm:items-center sm:gap-x-8 sm:gap-y-2">
-        <Item term="POSITION" def={`${sources} sources left · ${assets} assets centre · ${destinations} destinations right`} />
+        <Item
+          term="POSITION"
+          def={
+            drawn
+              ? `${sources} sources left · ${assets} assets centre · ${destinations} destinations right`
+              : "Sources left · assets centre · destinations right"
+          }
+        />
         <Item term="RADIUS" def="Square root of observed value moved" />
         <Item term="EDGE WEIGHT" def="Value transferred along that relationship" />
-        <Item term="RING" def={fresh ? `${fresh} node${fresh === 1 ? "" : "s"} active in the newest indexed block` : "No node active in the newest block"} />
-        <Item term="WINDOW" def={`${window} · ${state}`} />
-        {graph.truncated ? (
+        <Item
+          term="RING"
+          def={
+            drawn
+              ? fresh
+                ? `${fresh} node${fresh === 1 ? "" : "s"} active in the newest indexed block`
+                : "No node active in the newest block"
+              : "Active in the newest indexed block"
+          }
+        />
+        {/* The window says its condition in the reader's terms; the machine
+            word for it stays in the API and in /docs. */}
+        <Item term="WINDOW" def={`${window} · ${presentLabel(state, "topology")}`} />
+        {drawn && graph.truncated ? (
           <Item term="SHOWN" def={`${graph.shown.nodes} of ${graph.totals.addresses + graph.totals.assets} — ranked by value`} />
         ) : null}
       </dl>

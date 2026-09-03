@@ -269,6 +269,46 @@ on conflict (chain_id) do update
           </Note>
         </DocSection>
 
+        <DocSection id="presentation" title="Two vocabularies">
+          <P>
+            FOLDMARK keeps the state a machine reads and the state a person reads
+            deliberately separate, because they are answering different questions.
+          </P>
+          <P>
+            The API returns <code className="font-mono text-ink">UNAVAILABLE</code> and will keep
+            returning it. It is exact, it is documented, and an operator needs to know the difference
+            between a pipeline that has not reached an entity and storage that is not connected.
+            Nothing in the interface layer is allowed to change that.
+          </P>
+          <P>
+            But <code className="font-mono text-ink">UNAVAILABLE</code> is a statement about our
+            infrastructure, and someone reading an asset page did not ask about our infrastructure.
+            The same fact reads better as{" "}
+            <span className="font-mono text-ink">AWAITING THE FIRST PRICE OBSERVATION</span> on a
+            price panel and <span className="font-mono text-ink">STRUCTURE INITIALIZING</span> on the
+            topology canvas. <code className="font-mono text-ink">src/lib/presentation-state.ts</code>{" "}
+            holds that mapping, and takes a surface so the sentence fits what is actually missing.
+          </P>
+          <DocTable
+            caption="The same state, said twice"
+            columns={["DATA STATE", "API", "A PRICE PANEL", "THE TOPOLOGY CANVAS"]}
+            rows={[
+              ["UNAVAILABLE", "UNAVAILABLE", "SYNCING", "STRUCTURE INITIALIZING"],
+              ["INDEXING", "INDEXING", "SYNCING", "STRUCTURE INITIALIZING"],
+              ["EMPTY", "EMPTY", "NO OBSERVED ACTIVITY", "NO OBSERVED STRUCTURE"],
+              ["PARTIAL", "PARTIAL", "PARTIAL DATA", "PARTIAL DATA"],
+            ]}
+          />
+          <Note tone="warn">
+            The line this does not cross: presentation may change the words around a missing value.
+            It may never supply the value. Where a price would go there is an em dash, and a test
+            asserts that no string in the presentation layer contains a digit — so no future edit to
+            the copy can put a figure on screen through it. An empty chart keeps its grid and its
+            axes and draws no series, because a grid is an instrument with no signal and a drawn line
+            is a claim about a market.
+          </Note>
+        </DocSection>
+
         <DocSection id="rendering" title="Rendering model">
           <DocTable
             caption="Where work happens"

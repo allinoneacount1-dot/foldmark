@@ -1,8 +1,9 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { Split, Band, RailColumn } from "@/components/layout/Frame";
 import { Tape, TapeCell, TapeStatic } from "@/components/ui/Tape";
 import { Figure } from "@/components/ui/Figure";
-import { Display, Lede, Panel, PanelHeader, EmptyState, Methodology } from "@/components/ui/primitives";
+import { Display, Lede, Panel, PanelHeader, EmptyState, Methodology, StateTag } from "@/components/ui/primitives";
 import { ActionLink } from "@/components/ui/controls";
 import { Ledger, LedgerRow, LedgerCell, LedgerEmpty, type LedgerColumn } from "@/components/ui/Ledger";
 import { Sparkline, MagnitudeRow } from "@/components/charts";
@@ -10,6 +11,7 @@ import { TopologyView } from "@/components/graph/TopologyView";
 import { CapitalFlowModule, NetworkActivityModule, TopFlowsModule } from "@/components/intelligence/rail";
 import {
   getAssets,
+  getChainHead,
   getIndexerStatus,
   getWindowActivity,
   getLatestPrices,
@@ -20,8 +22,9 @@ import {
 } from "@/lib/queries";
 import { buildMarketGraph } from "@/lib/graph";
 import { buildAssetContext } from "@/lib/context";
-import { measured, indexing, withFreshness } from "@/lib/data-state";
-import { blockLabel, compact, integer, relativeTime, shortAddress } from "@/lib/format";
+import { measured, indexing, withFreshness, hasValue, type DataState, type Measured } from "@/lib/data-state";
+import { present, type Surface } from "@/lib/presentation-state";
+import { blockLabel, compact, integer, relativeTime, shortAddress, utcClock } from "@/lib/format";
 import { ASSET_TYPE_LABEL, CHAIN, SITE } from "@/config/site";
 
 export const revalidate = 30;
@@ -36,9 +39,16 @@ const COLUMNS: LedgerColumn[] = [
   { key: "contract", label: "CONTRACT", width: "minmax(110px, 0.8fr)", align: "right", hideBelow: "lg" },
 ];
 
+/** The fields a capital-ledger row carries. Named beside an empty ledger, never filled. */
+const EDGE_FIELDS = ["FROM", "TO", "ASSET", "VALUE", "TRANSFERS"] as const;
+
 export default async function Home() {
   const now = await requestNow();
-  const [indexer, assetsResult, activity, assetCount, transferCount] = await Promise.all([
+  const [head, indexer, assetsResult, activity, assetCount, transferCount] = await Promise.all([
+    // Read straight over RPC. The masthead's live rail is built from this and
+    // nothing else, so the hero states a real fact on a deployment that has no
+    // database at all — which is precisely the deployment it has to survive.
+    getChainHead(),
     getIndexerStatus(),
     getAssets(),
     getWindowActivity("24H", now),
@@ -57,12 +67,24 @@ export default async function Home() {
   const context = lead ? await buildAssetContext(lead.symbol) : null;
   const maxEdge = edges[0]?.amount ?? 1;
 
+  const linkLive = hasValue(head);
+  const drawn = graph.nodes.length > 0;
+
+  /** A missing price row is a quote not yet observed, never a price of zero. */
+  const priceState: DataState = assetsResult.state === "UNAVAILABLE" ? "UNAVAILABLE" : "INDEXING";
+  /** How many of the indexed assets actually carry an observed quote. */
+  const quoted = prices.size;
+  const marketState: DataState = quoted > 0 ? "OK" : priceState;
+
   return (
     <>
+      <style>{HOME_CSS}</style>
+
       {/* 00 — MASTHEAD ---------------------------------------------------- */}
       <Band rhythm="quiet" reveal={false}>
         <Split
           ratio="8:4"
+          gap="gap-10"
           left={
             /* A short staged entrance, in reading order: kicker, statement,
                standfirst, actions. Roughly 400ms end to end — enough to feel
@@ -91,21 +113,50 @@ export default async function Home() {
               </div>
             </div>
           }
-          right={<span aria-hidden />}
+          right={
+            <LiveRail
+              head={head}
+              now={now}
+              registry={assetCount}
+              marketState={marketState}
+              quoted={quoted}
+            />
+          }
         />
       </Band>
 
       {/* THE TAPE ---------------------------------------------------------- */}
-      <Tape label="Live index status" enterDelay={340}>
+      <Tape label="Chain link and index state" enterDelay={340}>
+        <TapeStatic label="CHAIN" value={`${CHAIN.id} · ${CHAIN.name.toUpperCase()}`} />
+        <TapeCell
+          label="CHAIN HEAD"
+          measurement={head}
+          format={(v) => blockLabel(Number(v))}
+          surface="network"
+          emphasis={linkLive}
+        />
+        {linkLive ? <TapeStatic label="HEAD READ" value={relativeTime(head.observedAt, now)} /> : null}
+        <TapeStatic label="SESSION" value={utcClock(new Date(now).toISOString())} />
         <TapeCell
           label="INDEXED TO"
           measurement={withFreshness(indexer.lastProcessedBlock, now)}
           format={(v) => blockLabel(Number(v))}
+          surface="activity"
         />
-        <TapeCell label="CHAIN HEAD" measurement={indexer.chainHead} format={(v) => blockLabel(Number(v))} />
-        <TapeCell label="LAG" measurement={indexer.lagBlocks} format={(v) => integer(Number(v))} unit="BLOCKS" />
-        <TapeCell label="ASSETS" measurement={assetCount} format={(v) => integer(Number(v))} />
-        <TapeCell label="TRANSFERS INDEXED" measurement={transferCount} format={(v) => integer(Number(v))} />
+        <TapeCell
+          label="LAG"
+          measurement={indexer.lagBlocks}
+          format={(v) => integer(Number(v))}
+          unit="BLOCKS"
+          surface="activity"
+        />
+        <TapeCell label="ASSETS" measurement={assetCount} format={(v) => integer(Number(v))} surface="registry" />
+        <TapeCell
+          label="TRANSFERS INDEXED"
+          measurement={transferCount}
+          format={(v) => integer(Number(v))}
+          surface="flow"
+        />
         <TapeCell
           label="ACTIVE ADDRESSES 24H"
           measurement={
@@ -114,9 +165,8 @@ export default async function Home() {
               : indexing<number>({ source: "FOLDMARK indexer" })
           }
           format={(v) => integer(Number(v))}
+          surface="activity"
         />
-        <TapeStatic label="UPDATED" value={relativeTime(indexer.updatedAt, now)} />
-        <TapeStatic label="CHAIN" value={`${CHAIN.id} · ${CHAIN.name.toUpperCase()}`} />
       </Tape>
 
       {/* 01 — MARKET LEDGER ------------------------------------------------ */}
@@ -137,7 +187,7 @@ export default async function Home() {
                       <span className="label-s">{ASSET_TYPE_LABEL[a.asset_type] ?? a.asset_type}</span>
                     </LedgerCell>
                     <LedgerCell column={COLUMNS[2]}>
-                      <Cell value={price ? `$${compact(price.price, 4)}` : null} absent="NO FEED" />
+                      <Cell value={price ? `$${compact(price.price, 4)}` : null} state={priceState} surface="price" />
                     </LedgerCell>
                     <LedgerCell column={COLUMNS[3]}>
                       <div className="flex items-center justify-end gap-3">
@@ -146,14 +196,22 @@ export default async function Home() {
                             <Sparkline series={act.buckets} tone="muted" label={`${a.symbol} transfer rate`} />
                           </span>
                         ) : null}
-                        <Cell value={act ? integer(act.transfers) : null} absent="NONE" />
+                        <Cell
+                          value={act ? integer(act.transfers) : null}
+                          state={activity.state}
+                          surface="activity"
+                        />
                       </div>
                     </LedgerCell>
                     <LedgerCell column={COLUMNS[4]}>
-                      <Cell value={act ? compact(act.volume) : null} absent="NONE" />
+                      <Cell value={act ? compact(act.volume) : null} state={activity.state} surface="flow" />
                     </LedgerCell>
                     <LedgerCell column={COLUMNS[5]}>
-                      <Cell value={act ? integer(act.counterparties) : null} absent="NONE" />
+                      <Cell
+                        value={act ? integer(act.counterparties) : null}
+                        state={activity.state}
+                        surface="activity"
+                      />
                     </LedgerCell>
                     <LedgerCell column={COLUMNS[6]}>
                       <span className="tabular font-mono text-data-s text-ink-faint">
@@ -164,11 +222,10 @@ export default async function Home() {
                 );
               })
             ) : (
-              <LedgerEmpty
-                state={assetsResult.state}
-                title="The registry is still filling"
-                detail="An asset is added when the indexer observes an ERC-20 Transfer for its contract. Nothing is seeded."
-              />
+              /* The table keeps its headers, so the reader can see the shape of
+                 what is coming. The copy is the registry surface's own — this
+                 page does not write a second version of it. */
+              <LedgerEmpty state={assetsResult.state} surface="registry" />
             )}
           </Ledger>
         </div>
@@ -198,20 +255,30 @@ export default async function Home() {
               <Figure
                 index="01"
                 caption={
-                  <>
-                    Market topology over 24H — {integer(graph.shown.nodes)} nodes and {integer(graph.shown.edges)}{" "}
-                    relationships from {integer(graph.totals.transfers)} observed transfers.
-                  </>
+                  drawn ? (
+                    <>
+                      Market topology over 24H — {integer(graph.shown.nodes)} nodes and {integer(graph.shown.edges)}{" "}
+                      relationships from {integer(graph.totals.transfers)} observed transfers.
+                    </>
+                  ) : (
+                    <>
+                      Market topology over 24H — a node for every address and asset observed moving value, an edge for
+                      every transfer between two of them.
+                    </>
+                  )
                 }
                 provenance="ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS INDEXED BY FOLDMARK"
                 aside={
-                  <Link href="/fabric" className="label text-ink-muted m-fast hover:text-ink">
-                    OPEN FULL MAP →
-                  </Link>
+                  <span className="flex items-center gap-3">
+                    {drawn ? null : <StateTag state={activity.state} surface="topology" />}
+                    <Link href="/fabric" className="label text-ink-muted m-fast hover:text-ink">
+                      OPEN FULL MAP →
+                    </Link>
+                  </span>
                 }
               >
                 <div className="flex h-[30rem] min-h-0">
-                  <TopologyView graph={graph} />
+                  <TopologyView graph={graph} state={activity.state} />
                 </div>
               </Figure>
             }
@@ -251,12 +318,20 @@ export default async function Home() {
                 </div>
               ) : (
                 <Panel tone="void">
-                  <PanelHeader title="CAPITAL LEDGER" state={activity.state} />
-                  <EmptyState
-                    state={activity.state}
-                    title="No value moved in the last 24 hours"
-                    detail="This is what the index actually holds. FOLDMARK does not fill the gap with a sample."
-                  />
+                  <PanelHeader title="CAPITAL LEDGER" meta="24H" state={activity.state} surface="flow" />
+                  <EmptyState state={activity.state} surface="flow" />
+                  {/* The columns an edge row will carry, named. Nothing is put
+                      in them, and nothing is ranked, because nothing moved. */}
+                  <div className="grid grid-cols-2 gap-px border-t border-rule bg-rule sm:grid-cols-5">
+                    {EDGE_FIELDS.map((field) => (
+                      <div key={field} className="flex items-baseline justify-between gap-2 bg-void px-4 py-2.5">
+                        <span className="label-s truncate">{field}</span>
+                        <span aria-hidden className="shrink-0 font-mono text-data-s text-ink-dim">
+                          &mdash;
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </Panel>
               )}
             </div>
@@ -302,19 +377,21 @@ export default async function Home() {
           }
           right={
             <div data-reveal-item="rail" className="min-w-0 border border-rule">
-              <div className="flex items-center justify-between border-b border-rule px-4 py-2.5">
-                <span className="label text-ink">
-                  GET /api/v1/context/{lead?.symbol ?? "{symbol}"}
+              <div className="flex items-center justify-between gap-3 border-b border-rule px-4 py-2.5">
+                <span className="label truncate text-ink">
+                  GET /api/v1/context/{lead?.symbol ?? "{asset}"}
                 </span>
-                <span className="label-s text-ink-faint">LIVE RESPONSE</span>
+                <span className="label-s shrink-0 text-ink-faint">
+                  {context ? "LIVE RESPONSE · 200" : "LIVE RESPONSE · 404"}
+                </span>
               </div>
               <pre className="max-h-[26rem] overflow-auto px-4 py-3 font-mono text-data-s leading-relaxed text-ink-muted">
-                {context
-                  ? JSON.stringify(context, null, 2)
-                  : `{\n  "error": "ASSET_NOT_INDEXED",\n  "reason": "No asset has been observed on chain ${CHAIN.id} yet"\n}`}
+                {JSON.stringify(context ?? NOT_INDEXED, null, 2)}
               </pre>
               <p className="label-s border-t border-rule px-4 py-2 text-ink-faint">
-                RENDERED FROM THE SAME BUILDER THE ROUTE USES — NOT A SAMPLE
+                {context
+                  ? "RENDERED FROM THE SAME BUILDER THE ROUTE USES — NOT A SAMPLE"
+                  : "THE BODY THE ROUTE RETURNS WHILE NO ASSET IS INDEXED — NOT A SAMPLE RESPONSE"}
               </p>
             </div>
           }
@@ -324,12 +401,174 @@ export default async function Home() {
   );
 }
 
-function Cell({ value, absent }: { value: string | null; absent: string }) {
+/* ------------------------------------------------------------------ parts */
+
+/**
+ * The 404 body `/api/v1/context/[asset]` actually returns for an unindexed
+ * asset, reproduced field for field. Showing the real error contract is the
+ * honest thing to put here: it carries no measurement, and a consumer reading
+ * this page learns exactly what they will receive.
+ */
+const NOT_INDEXED = {
+  error: "ASSET_NOT_INDEXED",
+  asset: "{asset}",
+  chain_id: CHAIN.id,
+  methodology: "An asset resolves once the indexer has observed an ERC-20 Transfer for its contract.",
+} as const;
+
+/**
+ * The masthead's live rail.
+ *
+ * It answers one question above the fold — is this thing connected to anything?
+ * — and it answers it with the only fact that is true on a deployment with no
+ * storage: the chain head, read over RPC. The layers beneath it say what they
+ * are waiting for in their own terms and hold an em dash where their figure
+ * will go. Nothing here is derived from the database, so the hero cannot go
+ * blank when the database is not there.
+ */
+function LiveRail({
+  head,
+  now,
+  registry,
+  marketState,
+  quoted,
+}: {
+  head: Measured<number>;
+  now: number;
+  /** Count of indexed assets, as measured — not a number this component invents. */
+  registry: Measured<number>;
+  marketState: DataState;
+  quoted: number;
+}) {
+  const live = hasValue(head);
   return (
-    <span
-      className={`tabular font-mono text-data-s ${value ? "text-ink" : "uppercase tracking-[0.12em] text-ink-faint"}`}
+    <aside
+      aria-label="Live state"
+      className="m-enter-fade border border-rule bg-surface"
+      style={{ animationDelay: "320ms" }}
     >
-      {value ?? absent}
+      <header className="flex items-center justify-between gap-3 border-b border-rule px-4 py-2.5">
+        <span className="label text-ink">LIVE STATE</span>
+        <span className="label-s text-ink-faint">CHAIN {CHAIN.id}</span>
+      </header>
+
+      <RailRow
+        title="CHAIN LINK"
+        state={head.state}
+        surface="network"
+        tone="signal"
+        value={live ? blockLabel(head.value) : null}
+        caption={live ? "CHAIN HEAD" : undefined}
+      />
+      <RailRow
+        title="MARKET DATA"
+        state={marketState}
+        surface="market"
+        value={quoted > 0 ? integer(quoted) : null}
+        caption={quoted > 0 ? "ASSETS QUOTED" : undefined}
+      />
+      <RailRow
+        title="ASSET INDEX"
+        state={registry.state}
+        surface="registry"
+        value={hasValue(registry) ? integer(registry.value) : null}
+        caption={hasValue(registry) ? "INDEXED" : undefined}
+      />
+
+      <footer className="flex flex-col gap-1 border-t border-rule px-4 py-2.5">
+        <p className="label-s truncate text-ink-faint">{head.provenance.source}</p>
+        <p className="label-s text-ink-faint">
+          {live ? `READ ${relativeTime(head.observedAt, now)}` : "NO ENDPOINT ANSWERED"} ·{" "}
+          {utcClock(new Date(now).toISOString())}
+        </p>
+      </footer>
+    </aside>
+  );
+}
+
+/** One layer of the rail: what it is, its condition, and its value or its dash. */
+function RailRow({
+  title,
+  state,
+  surface,
+  value = null,
+  caption,
+  tone = "ink",
+}: {
+  title: string;
+  state: DataState;
+  surface: Surface;
+  value?: string | null;
+  caption?: ReactNode;
+  /** Signal is reserved for the chain link — the one value being read right now. */
+  tone?: "ink" | "signal";
+}) {
+  const p = present(state, surface);
+  const live = value !== null;
+  return (
+    <div className="flex flex-col gap-1.5 border-b border-rule-faint px-4 py-3 last:border-b-0">
+      <div className="flex items-center justify-between gap-3">
+        <span className="label-s truncate">{title}</span>
+        <StateTag state={state} surface={surface} />
+      </div>
+      {live ? (
+        <p className="flex items-baseline gap-2">
+          {tone === "signal" ? <span aria-hidden className="fm-tick h-1.5 w-1.5 shrink-0 bg-signal" /> : null}
+          <span
+            className={`tabular truncate font-mono text-data-l ${tone === "signal" ? "text-signal" : "text-ink"}`}
+          >
+            {value}
+          </span>
+          {caption ? <span className="label-s shrink-0 text-ink-faint">{caption}</span> : null}
+        </p>
+      ) : (
+        <p className="flex items-baseline gap-2">
+          <span aria-hidden className="font-mono text-data-l leading-none text-ink-dim">
+            &mdash;
+          </span>
+          <span className="sr-only">{p.detail}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A ledger cell.
+ *
+ * A real value prints. Anything else prints an em dash, with the state left for
+ * a screen reader and a tooltip rather than set in the row — at this density a
+ * status word per cell would either wrap the table or truncate itself.
+ */
+function Cell({ value, state, surface }: { value: string | null; state: DataState; surface: Surface }) {
+  if (value !== null) return <span className="tabular font-mono text-data-s text-ink">{value}</span>;
+  const p = present(state, surface);
+  return (
+    <span className="font-mono text-data-s text-ink-dim" title={p.label}>
+      <span aria-hidden>&mdash;</span>
+      <span className="sr-only">{p.label}</span>
     </span>
   );
 }
+
+/**
+ * Page-local motion: one slow tick on the live layer, and nothing else.
+ *
+ * It marks the single value on this page that is genuinely being read right
+ * now. Nothing else moves, because nothing else is happening — and a pulse
+ * beside an unobserved figure would be describing activity that does not exist.
+ */
+const HOME_CSS = `
+.fm-tick {
+  animation: fm-tick-blink 2600ms steps(1, end) infinite;
+}
+
+@keyframes fm-tick-blink {
+  0%, 62% { opacity: 1; }
+  63%, 100% { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fm-tick { animation: none; opacity: 1; }
+}
+`;

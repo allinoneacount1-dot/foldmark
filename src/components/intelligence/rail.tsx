@@ -12,7 +12,41 @@ import type { FlowWindow } from "@/config/site";
  * Compact modules that sit beside the chart and the topology. Each module owns
  * one question, states its own data condition, and renders a state rather than
  * a number when the pipeline has nothing to report.
+ *
+ * Every module declares the SURFACE it holds — flow, activity, structure — so
+ * the same absent value is said in that module's own terms instead of one
+ * generic sentence repeated down the whole column.
  */
+
+/**
+ * The state a module shows when it has nothing to render.
+ *
+ * EMPTY survives, because EMPTY is a measurement: the index covered the window
+ * and found nothing inside it, which is a finding rather than a fault. Every
+ * other state with no rows behind it is a surface still waiting, and INDEXING
+ * is how that is said to a reader — UNAVAILABLE is a fact about our storage, it
+ * renders in the negative tone, and it answers a question about infrastructure
+ * that nobody reading a market panel asked.
+ *
+ * This changes the word and the colour. It never changes a value, because there
+ * is no value: the machine vocabulary is untouched and the API still returns
+ * UNAVAILABLE to anything that reads it.
+ */
+/**
+ * The state a rail module should show.
+ *
+ * With rows present the state passes through untouched. With none, the question
+ * is whether the absence was measured. EMPTY, PARTIAL and STALE all mean the
+ * query answered — the index looked and found nothing in what it covers — so
+ * they are preserved. Collapsing PARTIAL into INDEXING would turn a measured
+ * "nothing here, over a shorter window than you asked for" into "we have not
+ * looked yet", which is a different and weaker claim than the one we can make.
+ */
+function railState(state: DataState, has: boolean): DataState {
+  if (has) return state;
+  if (state === "EMPTY" || state === "PARTIAL" || state === "STALE") return state;
+  return "INDEXING";
+}
 
 /* ------------------------------------------------------------ capital flow */
 
@@ -31,10 +65,11 @@ export function CapitalFlowModule({
   // Assets on the edges, not amounts added together: this module spans assets.
   const assetsMoving = new Set(edges.map((e) => e.assetId).filter(Boolean)).size;
   const hasFlow = activity.transfers > 0;
+  const state = railState(activity.state, hasFlow);
 
   return (
     <Panel>
-      <PanelHeader title="CAPITAL FLOW" meta={window} state={hasFlow ? activity.state : "INDEXING"} />
+      <PanelHeader title="CAPITAL FLOW" meta={window} state={state} surface="flow" />
       {hasFlow ? (
         <>
           <div className="grid grid-cols-2 gap-px bg-rule">
@@ -67,9 +102,13 @@ export function CapitalFlowModule({
         </>
       ) : (
         <EmptyState
-          state={activity.state}
-          title="No capital movement observed"
-          detail={`The indexer has recorded no transfer inside the ${window} window. This is the real state of the index, not an empty placeholder.`}
+          state={state}
+          surface="flow"
+          detail={
+            state === "EMPTY"
+              ? `The index covers the ${window} window and recorded no transfer inside it.`
+              : undefined
+          }
         />
       )}
     </Panel>
@@ -80,9 +119,10 @@ export function CapitalFlowModule({
 
 export function NetworkActivityModule({ window, activity }: { window: FlowWindow; activity: WindowActivity }) {
   const has = activity.transfers > 0;
+  const state = railState(activity.state, has);
   return (
     <Panel>
-      <PanelHeader title="NETWORK ACTIVITY" meta={window} state={has ? activity.state : "INDEXING"} />
+      <PanelHeader title="NETWORK ACTIVITY" meta={window} state={state} surface="activity" />
       {has ? (
         <>
           <div className="grid grid-cols-3 gap-px bg-rule">
@@ -115,8 +155,8 @@ export function NetworkActivityModule({ window, activity }: { window: FlowWindow
         </>
       ) : (
         <EmptyState
-          state={activity.state}
-          title="No network activity in window"
+          state={state}
+          surface="activity"
           detail="Active addresses, assets and counterparty pairs appear here once transfers are observed."
         />
       )}
@@ -139,10 +179,14 @@ export function TopFlowsModule({
 }) {
   const symbols = new Map(assets.map((a) => [a.id, a.symbol]));
   const max = edges[0]?.amount ?? 1;
+  // This module ranks relationships between addresses, which is the structure
+  // layer seen as a ledger rather than as a map — so it speaks the topology
+  // surface, and says the same thing the canvas says on /fabric.
+  const shown = railState(state, edges.length > 0);
 
   return (
     <Panel>
-      <PanelHeader title="TOP FLOWS" meta={window} state={edges.length ? state : "INDEXING"} />
+      <PanelHeader title="TOP FLOWS" meta={window} state={shown} surface="topology" />
       {edges.length ? (
         <div className="px-4 py-2">
           {edges.slice(0, 6).map((e) => (
@@ -158,8 +202,8 @@ export function TopFlowsModule({
         </div>
       ) : (
         <EmptyState
-          state={state}
-          title="No flows to rank"
+          state={shown}
+          surface="topology"
           detail="Directed value edges appear here once the indexer records transfers between addresses."
         />
       )}
@@ -177,9 +221,10 @@ export function TopFlowsModule({
  */
 export function StructureChangeModule({ change, window }: { change: StructureChange; window: FlowWindow }) {
   const known = change.currentPairs > 0 || change.previousPairs > 0;
+  const state = railState(change.state, known);
   return (
     <Panel>
-      <PanelHeader title="STRUCTURE CHANGE" meta={window} state={known ? change.state : "INDEXING"} />
+      <PanelHeader title="STRUCTURE CHANGE" meta={window} state={state} surface="topology" />
       {known ? (
         <>
           <div className="grid grid-cols-2 gap-px bg-rule">
@@ -206,7 +251,8 @@ export function StructureChangeModule({ change, window }: { change: StructureCha
         </>
       ) : (
         <EmptyState
-          state={change.state}
+          state={state}
+          surface="topology"
           title="Structure not yet comparable"
           detail="Two consecutive windows of observed transfers are required before structural change can be measured."
         />
@@ -229,9 +275,10 @@ export function EventLedger({
   now: number;
 }) {
   const byId = new Map(assets.map((a) => [a.id, a]));
+  const shown = railState(state, rows.length > 0);
   return (
     <Panel>
-      <PanelHeader title="NETWORK EVENTS" meta="MOST RECENT" state={rows.length ? state : "INDEXING"} />
+      <PanelHeader title="NETWORK EVENTS" meta="MOST RECENT" state={shown} surface="activity" />
       {rows.length ? (
         <ol className="max-h-[320px] overflow-y-auto">
           {rows.slice(0, 24).map((r) => {
@@ -253,7 +300,12 @@ export function EventLedger({
           })}
         </ol>
       ) : (
-        <EmptyState state={state} title="No events indexed" detail="The ledger fills as the indexer commits blocks." />
+        <EmptyState
+          state={shown}
+          surface="activity"
+          title="No events indexed"
+          detail="The ledger fills as the indexer commits blocks."
+        />
       )}
       <p className="label-s border-t border-rule px-4 py-2 text-ink-faint">
         SOURCE ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS

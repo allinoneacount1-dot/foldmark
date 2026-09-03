@@ -7,6 +7,8 @@ import { INTERVALS } from "@/lib/ohlc";
 import { WINDOWS, type FlowWindow } from "@/config/site";
 import { compact, integer } from "@/lib/format";
 import { StateTag } from "@/components/ui/primitives";
+import { EmptyChartSurface } from "@/components/charts/ChartSurface";
+import { present } from "@/lib/presentation-state";
 import { IconExpand, IconCollapse, IconSource } from "@/components/icons";
 import type { DataState } from "@/lib/data-state";
 
@@ -19,6 +21,9 @@ import type { DataState } from "@/lib/data-state";
  *
  * It never invents a candle. When the price pipeline has no observation the
  * component says so and charts the activity FOLDMARK really does observe.
+ *
+ * And when neither series exists, it draws the instrument and not the market:
+ * full chrome, grid, axis frame, no series, no axis numbers. See ChartSurface.
  */
 
 type ChartPayload = {
@@ -68,6 +73,11 @@ export function MarketChart({
   const [style, setStyle] = useState<ChartStyle>("candle");
   const [showVolume, setShowVolume] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
+  /**
+   * Retry counter. It is part of the request key, so RETRY genuinely re-issues
+   * the request instead of setting state to the value it already held.
+   */
+  const [attempt, setAttempt] = useState(0);
   /** The last settled response, tagged with the request that produced it. */
   const [loaded, setLoaded] = useState<{ key: string; payload: ChartPayload | null } | null>(null);
 
@@ -76,7 +86,7 @@ export function MarketChart({
   const priceSeriesRef = useRef<ISeriesApi<"Candlestick" | "Line" | "Area"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
 
-  const requestKey = `${contract}|${range}|${interval ?? "auto"}`;
+  const requestKey = `${contract}|${range}|${interval ?? "auto"}|${attempt}`;
 
   // Status is derived rather than stored, so no render is triggered from
   // inside an effect just to say "loading".
@@ -89,7 +99,7 @@ export function MarketChart({
     const controller = new AbortController();
     const qs = new URLSearchParams({ range });
     if (interval) qs.set("interval", interval);
-    const key = `${contract}|${range}|${interval ?? "auto"}`;
+    const key = `${contract}|${range}|${interval ?? "auto"}|${attempt}`;
 
     fetch(`/api/v1/assets/${contract}/candles?${qs}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
@@ -103,7 +113,7 @@ export function MarketChart({
         setLoaded({ key, payload: null });
       });
     return () => controller.abort();
-  }, [contract, range, interval]);
+  }, [contract, range, interval, attempt]);
 
   const hasPriceSeries = payload?.series === "price" && payload.candles.length > 0;
   const hasActivitySeries = (payload?.volume.length ?? 0) > 0;
@@ -254,6 +264,38 @@ export function MarketChart({
 
   const available = payload?.intervals.available ?? [];
 
+  /**
+   * Header chip and provenance line for every state, including the ones with
+   * no data. They describe the link and the pipeline — never a value.
+   */
+  const headState: DataState = payload
+    ? renderable
+      ? payload.series === "price"
+        ? payload.price_state
+        : payload.activity_state
+      : payload.price_state
+    : status === "error"
+      ? "UNAVAILABLE"
+      : "INDEXING";
+
+  const headLabel =
+    status === "error"
+      ? "NO RESPONSE"
+      : renderable && payload?.series === "activity"
+        ? "OBSERVED ACTIVITY"
+        : undefined;
+
+  const sourceLine =
+    status === "loading"
+      ? "SOURCE — CONNECTING"
+      : status === "error"
+        ? "SOURCE — NO RESPONSE"
+        : hasPriceSeries && payload
+          ? `PRICE — ${payload.provenance.price?.join(", ") ?? "UNKNOWN SOURCE"}`
+          : hasActivitySeries
+            ? "ACTIVITY — ROBINHOOD CHAIN RPC · TRANSFER LOGS"
+            : "SOURCE — AWAITING FIRST OBSERVATION";
+
   const body = (
     <div
       className={`flex flex-col border border-rule bg-void ${fullscreen ? "min-h-0 flex-1" : ""} ${className}`}
@@ -262,31 +304,32 @@ export function MarketChart({
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-rule px-3 py-2">
         <div className="flex items-center gap-2">
           <span className="label-s text-ink">{symbol}</span>
-          {payload ? (
-            <StateTag
-              state={payload.series === "price" ? payload.price_state : payload.activity_state}
-              label={payload.series === "price" ? undefined : "OBSERVED ACTIVITY"}
-            />
-          ) : null}
+          <StateTag state={headState} surface="chart" label={headLabel} />
         </div>
 
-        {hasPriceSeries ? (
-          <div role="group" aria-label="Chart style" className="flex">
-            {(["candle", "line", "area"] as ChartStyle[]).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStyle(s)}
-                aria-pressed={style === s}
-                className={`h-7 border px-2 font-mono text-label-s uppercase tracking-[0.14em] m-fast ${
-                  style === s ? "border-ink bg-ink text-void" : "border-rule text-ink-dim hover:text-ink"
-                } -ml-px first:ml-0`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        ) : null}
+        {/* The style group stays mounted with no series so the instrument keeps
+            its full chrome and the toolbar does not reflow when data arrives. */}
+        <div role="group" aria-label="Chart style" className="flex">
+          {(["candle", "line", "area"] as ChartStyle[]).map((s) => (
+            <button
+              key={s}
+              type="button"
+              disabled={!hasPriceSeries}
+              onClick={() => setStyle(s)}
+              aria-pressed={hasPriceSeries && style === s}
+              title={hasPriceSeries ? `${s} series` : `${s} available once a price series is observed`}
+              className={`h-7 border px-2 font-mono text-label-s uppercase tracking-[0.14em] m-fast -ml-px first:ml-0 ${
+                hasPriceSeries
+                  ? style === s
+                    ? "border-ink bg-ink text-void"
+                    : "border-rule text-ink-dim hover:text-ink"
+                  : "cursor-not-allowed border-rule-faint text-ink-faint"
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
 
         <div role="group" aria-label="Interval" className="flex min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {INTERVALS.map((i) => {
@@ -300,11 +343,11 @@ export function MarketChart({
                 aria-pressed={interval === i}
                 title={enabled ? `${i} candles` : `${i} not supported by available observations`}
                 className={`h-7 shrink-0 border px-2 font-mono text-label-s uppercase tracking-[0.14em] m-fast -ml-px first:ml-0 ${
-                  interval === i
+                  enabled && interval === i
                     ? "border-ink bg-ink text-void"
                     : enabled
                       ? "border-rule text-ink-dim hover:text-ink"
-                      : "cursor-not-allowed border-rule text-ink-faint/40"
+                      : "cursor-not-allowed border-rule-faint text-ink-faint"
                 }`}
               >
                 {i}
@@ -346,7 +389,13 @@ export function MarketChart({
           <button
             type="button"
             onClick={reset}
-            className="h-7 border border-rule px-2 font-mono text-label-s uppercase tracking-[0.14em] text-ink-dim m-fast hover:text-ink"
+            disabled={!renderable}
+            title={renderable ? "Fit the series to the frame" : "Nothing to fit until a series is observed"}
+            className={`h-7 border px-2 font-mono text-label-s uppercase tracking-[0.14em] m-fast ${
+              renderable
+                ? "border-rule text-ink-dim hover:text-ink"
+                : "cursor-not-allowed border-rule-faint text-ink-faint"
+            }`}
           >
             RESET
           </button>
@@ -366,58 +415,56 @@ export function MarketChart({
         className={fullscreen ? "relative min-h-0 flex-1" : "relative w-full shrink-0"}
         style={fullscreen ? undefined : { height }}
       >
-        {status === "loading" ? (
-          <p className="absolute inset-0 grid place-items-center font-mono text-label uppercase tracking-[0.16em] text-ink-faint">
-            LOADING PRICE HISTORY…
-          </p>
-        ) : null}
+        {/* The instrument is switched on in every one of these states. It shows
+            its frame and says what it is waiting for; it never shows a series
+            it does not have. */}
+        {status === "loading" ? <EmptyChartSurface status="SOURCE — CONNECTING" busy /> : null}
 
         {status === "error" ? (
-          <div className="absolute inset-0 grid place-items-center gap-3 p-6 text-center">
-            <p className="font-mono text-label uppercase tracking-[0.16em] text-negative">CHART DATA UNAVAILABLE</p>
-            <button
-              type="button"
-              onClick={() => setRange((r) => r)}
-              className="h-8 border border-rule-strong px-3 font-mono text-label-s uppercase tracking-[0.16em] text-ink hover:bg-ink hover:text-void"
-            >
-              RETRY
-            </button>
-          </div>
+          <EmptyChartSurface
+            state="UNAVAILABLE"
+            stateLabel="NO RESPONSE"
+            scan={false}
+            status="SOURCE — NO RESPONSE"
+            headline="The observation feed did not answer"
+            detail="Nothing is drawn from a request that failed. The frame stays empty until real observations arrive."
+            action={
+              <button
+                type="button"
+                onClick={() => setAttempt((n) => n + 1)}
+                className="mt-1 h-8 border border-rule-strong px-3 font-mono text-label-s uppercase tracking-[0.16em] text-ink m-fast hover:bg-ink hover:text-void"
+              >
+                RETRY
+              </button>
+            }
+          />
         ) : null}
 
-        {status === "ready" && !renderable ? (
-          <div className="absolute inset-0 flex flex-col items-start justify-center gap-2 p-6">
-            <StateTag state={payload?.price_state ?? "INDEXING"} />
-            <p className="font-display text-[1.25rem] text-ink">Insufficient history to chart</p>
-            <p className="max-w-[46ch] text-body-s text-ink-muted">
-              {integer(payload?.observations.price ?? 0)} price observations and{" "}
-              {integer(payload?.observations.transfers ?? 0)} transfers indexed for this asset in the {range} window. A
-              series is drawn once at least four intervals contain an observation.
-            </p>
-          </div>
-        ) : null}
+        {status === "ready" && !renderable ? <PendingChart payload={payload} range={range} /> : null}
 
         <div ref={hostRef} className="h-full w-full" aria-hidden={!renderable} />
       </div>
 
-      {/* provenance */}
+      {/* provenance — always three lines, so the footer never collapses into a
+          half-empty rule. Where a figure is missing it is an em dash, never a
+          stand-in value. */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-rule px-3 py-2">
         <p className="flex items-center gap-1.5 font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint">
           <IconSource size={10} />
-          {payload?.series === "price"
-            ? `PRICE — ${payload.provenance.price?.join(", ") ?? "UNKNOWN SOURCE"}`
-            : "ACTIVITY — ROBINHOOD CHAIN RPC · TRANSFER LOGS"}
+          {sourceLine}
         </p>
-        {payload ? (
-          <p className="font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint">
-            INTERVAL {interval ?? "—"} · {integer(payload.observations.transfers)} TX OBSERVED
-          </p>
-        ) : null}
-        {payload ? (
-          <p className="ml-auto font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint">
-            UPDATED <time dateTime={payload.updated_at}>{payload.updated_at.slice(11, 19)} UTC</time>
-          </p>
-        ) : null}
+        <p className="font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint">
+          INTERVAL {renderable && interval ? interval : "—"} ·{" "}
+          {payload ? `${integer(payload.observations.transfers)} TX OBSERVED` : "— TX OBSERVED"}
+        </p>
+        <p className="ml-auto font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint">
+          UPDATED{" "}
+          {payload ? (
+            <time dateTime={payload.updated_at}>{payload.updated_at.slice(11, 19)} UTC</time>
+          ) : (
+            <span aria-label="no observation yet">&mdash;</span>
+          )}
+        </p>
       </div>
     </div>
   );
@@ -428,5 +475,43 @@ export function MarketChart({
     <div className="fixed inset-0 z-[80] flex flex-col bg-void p-3" role="dialog" aria-modal="true" aria-label={`${symbol} chart, fullscreen`}>
       {body}
     </div>
+  );
+}
+
+/**
+ * The response settled and there is no series in it.
+ *
+ * Two honestly different cases, and the difference is worth saying:
+ *
+ *   nothing observed   the pipeline has not reached this asset. The sentence
+ *                      for that is already written in the presentation layer.
+ *   something observed real observations exist but not across enough intervals
+ *                      to form a series. Those counts are measured figures from
+ *                      the response, which is why they may be printed — every
+ *                      other number on this surface is a dash.
+ */
+function PendingChart({ payload, range }: { payload: ChartPayload | null; range: FlowWindow }) {
+  const state: DataState = payload?.price_state ?? "INDEXING";
+  const priceObs = payload?.observations.price ?? 0;
+  const transferObs = payload?.observations.transfers ?? 0;
+  const observed = priceObs > 0 || transferObs > 0;
+  const copy = present(state, "chart");
+
+  return (
+    <EmptyChartSurface
+      state={state}
+      status={observed ? "SOURCE — INSUFFICIENT HISTORY" : "SOURCE — AWAITING FIRST OBSERVATION"}
+      headline={observed ? "Insufficient history to chart" : copy.headline}
+      detail={
+        observed ? (
+          <>
+            {integer(priceObs)} price observations and {integer(transferObs)} transfers indexed for this asset in the{" "}
+            {range} window. A series is drawn once at least four intervals contain an observation.
+          </>
+        ) : (
+          copy.detail
+        )
+      }
+    />
   );
 }

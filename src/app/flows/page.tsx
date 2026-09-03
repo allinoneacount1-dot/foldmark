@@ -1,6 +1,16 @@
 import type { Metadata } from "next";
 import { Shell, Split, PageHead } from "@/components/layout/Frame";
-import { Panel, PanelHeader, EmptyState, Methodology, StateTag, CoverageNote } from "@/components/ui/primitives";
+import {
+  Panel,
+  PanelHeader,
+  EmptyState,
+  Methodology,
+  StateTag,
+  CoverageNote,
+  AbsentValue,
+} from "@/components/ui/primitives";
+import type { DataState } from "@/lib/data-state";
+import type { Surface } from "@/lib/presentation-state";
 import { ChipLink, ChipGroup } from "@/components/ui/controls";
 import { Ledger, LedgerRow, LedgerCell, LedgerEmpty, type LedgerColumn } from "@/components/ui/Ledger";
 import { Histogram, MagnitudeRow, FlowBar } from "@/components/charts";
@@ -119,6 +129,59 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
   }
   const assetShare = [...byAsset.entries()].sort((a, b) => b[1].transfers - a[1].transfers).slice(0, 8);
 
+  /**
+   * The headline row.
+   *
+   * A tile prints a figure only when the window was actually queried — a zero
+   * from a successful query is a measurement and is shown as one. Until the
+   * index reaches the window there is no measurement, so the tile prints a dash
+   * and names what it is waiting for, in the terms of the thing that is absent:
+   * an edge is flow, an address is a wallet, a notional is market data.
+   */
+  const observed = activity.state !== "INDEXING" && activity.state !== "UNAVAILABLE";
+  const tiles: { label: string; value: string | null; unit: string; state: DataState; surface: Surface }[] = [
+    {
+      label: "TRANSFERS ON EDGES",
+      value: observed ? integer(totalTransfers) : null,
+      unit: "OBSERVED",
+      state: activity.state,
+      surface: "flow",
+    },
+    {
+      label: "NOTIONAL MOVED",
+      value: notional.usd !== null ? compact(notional.usd) : null,
+      unit:
+        notional.state === "PARTIAL"
+          ? `USD · ${Math.round(notional.coverage * 100)}% OF TRANSFERS PRICED`
+          : notional.state === "OK"
+            ? "USD · EVERY TRANSFER PRICED"
+            : "NO ALIGNED PRICE",
+      state: notional.state,
+      surface: "market",
+    },
+    {
+      label: "TRANSFERS",
+      value: observed ? integer(activity.transfers) : null,
+      unit: window,
+      state: activity.state,
+      surface: "activity",
+    },
+    {
+      label: "DIRECTED EDGES",
+      value: observed ? integer(activity.uniquePairs) : null,
+      unit: "ADDRESS PAIRS",
+      state: activity.state,
+      surface: "flow",
+    },
+    {
+      label: "ACTIVE ADDRESSES",
+      value: observed ? integer(activity.activeAddresses) : null,
+      unit: window,
+      state: activity.state,
+      surface: "wallet",
+    },
+  ];
+
   return (
     <Shell>
       <div className="band-dense">
@@ -144,31 +207,17 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
         ) : null}
 
         <div className="mt-6 grid gap-px bg-rule sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            ["TRANSFERS ON EDGES", edges.length ? integer(totalTransfers) : null, "OBSERVED"],
-            [
-              "NOTIONAL MOVED",
-              notional.usd !== null ? `${compact(notional.usd)}` : null,
-              notional.state === "PARTIAL"
-                ? `USD · ${Math.round(notional.coverage * 100)}% OF TRANSFERS PRICED`
-                : notional.state === "OK"
-                  ? "USD · EVERY TRANSFER PRICED"
-                  : "NO ALIGNED PRICE",
-            ],
-            ["TRANSFERS", activity.transfers ? integer(activity.transfers) : null, window],
-            ["DIRECTED EDGES", activity.uniquePairs ? integer(activity.uniquePairs) : null, "ADDRESS PAIRS"],
-            ["ACTIVE ADDRESSES", activity.activeAddresses ? integer(activity.activeAddresses) : null, window],
-          ].map(([label, value, unit]) => (
-            <div key={label as string} className="bg-void p-4">
-              <p className="label-s">{label}</p>
-              <p
-                className={`tabular mt-1.5 font-mono text-data-l ${
-                  value ? "text-ink" : "uppercase tracking-[0.14em] text-ink-faint"
-                }`}
-              >
-                {value ?? "INDEXING"}
-              </p>
-              <p className="label-s mt-1 text-ink-faint">{unit}</p>
+          {tiles.map((t) => (
+            <div key={t.label} className="bg-void p-4">
+              <p className="label-s">{t.label}</p>
+              {t.value !== null ? (
+                <p className="tabular mt-1.5 font-mono text-data-l text-ink">{t.value}</p>
+              ) : (
+                <div className="mt-1.5">
+                  <AbsentValue state={t.state} surface={t.surface} />
+                </div>
+              )}
+              <p className="label-s mt-1 text-ink-faint">{t.unit}</p>
             </div>
           ))}
         </div>
@@ -223,8 +272,15 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
             ) : (
               <LedgerEmpty
                 state={activity.state}
-                title="No flow observed in this window"
-                detail="Widen the window, or wait for the indexer to reach blocks containing transfers."
+                surface="flow"
+                /* An observed-and-empty window earns the instruction to widen it.
+                   A window the index has not reached is still arriving, and the
+                   flow surface says that instead. */
+                detail={
+                  activity.state === "EMPTY"
+                    ? "Widen the window, or wait for the indexer to reach blocks containing transfers."
+                    : undefined
+                }
               />
             )}
           </Ledger>
@@ -237,7 +293,12 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
             left={
               <div className="grid gap-6 sm:grid-cols-2">
                 <Panel>
-                  <PanelHeader title="MOST ACTIVE DESTINATIONS" meta={window} state={receivers.length ? activity.state : "INDEXING"} />
+                  <PanelHeader
+                    title="MOST ACTIVE DESTINATIONS"
+                    meta={window}
+                    state={receivers.length ? activity.state : "INDEXING"}
+                    surface="flow"
+                  />
                   {receivers.length ? (
                     <div className="px-4 py-2">
                       {receivers.map(({ activity: a, dominant }) => (
@@ -252,12 +313,17 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                       ))}
                     </div>
                   ) : (
-                    <EmptyState state={activity.state} title="No inbound transfer observed" />
+                    <EmptyState state={activity.state} surface="flow" />
                   )}
                 </Panel>
 
                 <Panel>
-                  <PanelHeader title="MOST ACTIVE SOURCES" meta={window} state={senders.length ? activity.state : "INDEXING"} />
+                  <PanelHeader
+                    title="MOST ACTIVE SOURCES"
+                    meta={window}
+                    state={senders.length ? activity.state : "INDEXING"}
+                    surface="flow"
+                  />
                   {senders.length ? (
                     <div className="px-4 py-2">
                       {senders.map(({ activity: a, dominant }) => (
@@ -271,7 +337,7 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                       ))}
                     </div>
                   ) : (
-                    <EmptyState state={activity.state} title="No outbound transfer observed" />
+                    <EmptyState state={activity.state} surface="flow" />
                   )}
                 </Panel>
 
@@ -280,6 +346,7 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                     title="MOST TRANSFERRED ASSETS"
                     meta={window}
                     state={assetShare.length ? activity.state : "INDEXING"}
+                    surface="flow"
                   />
                   {assetShare.length ? (
                     <div className="px-4 py-2">
@@ -295,7 +362,7 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                       ))}
                     </div>
                   ) : (
-                    <EmptyState state={activity.state} title="No asset was transferred in this window" />
+                    <EmptyState state={activity.state} surface="flow" />
                   )}
                   <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
                     {notionalNote(notional)}
@@ -313,6 +380,7 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                     title="NET FLOW BY ADDRESS"
                     meta={window}
                     state={flowRows.rows.length ? flowRows.state : "INDEXING"}
+                    surface="flow"
                   />
                   {flowRows.rows.length ? (
                     <div className="flex flex-col">
@@ -350,6 +418,7 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                   ) : (
                     <EmptyState
                       state={flowRows.state}
+                      surface="flow"
                       title="Net flow not yet computed"
                       detail="Directional flow is precomputed per address by the indexer after each run that commits new transfers."
                     />
@@ -363,7 +432,7 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                 </Panel>
 
                 <Panel>
-                  <PanelHeader title="CLASSIFICATION" state="INDEXING" />
+                  <PanelHeader title="CLASSIFICATION" state="INDEXING" surface="protocol" />
                   <div className="px-4 py-3">
                     <p className="text-body-s text-ink-muted">
                       FOLDMARK does not guess what a transfer meant. A flow is labelled only when the counterparty
@@ -389,7 +458,7 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                 <div className="border border-rule">
                   <div className="flex items-center justify-between border-b border-rule px-4 py-2.5">
                     <span className="label text-ink">DATA CONDITION</span>
-                    <StateTag state={activity.state} />
+                    <StateTag state={activity.state} surface="flow" />
                   </div>
                   <Methodology>
                     Every figure on this page is folded at request time from the transfers table over the trailing{" "}

@@ -7,6 +7,7 @@ import { Sparkline } from "@/components/charts";
 import { AssetSearch } from "@/components/forms/AssetSearch";
 import { getAssets, getWindowActivity, getLatestPrices, foldByAsset, requestNow,
 } from "@/lib/queries";
+import { presentLabel } from "@/lib/presentation-state";
 import { compact, integer, relativeTime, shortAddress } from "@/lib/format";
 import { ASSET_TYPE_LABEL, ASSET_TYPES, WINDOWS, CHAIN, type AssetType, type FlowWindow } from "@/config/site";
 
@@ -56,6 +57,9 @@ export default async function AssetsPage({
   const byAsset = foldByAsset(activity.rows, all, window, now);
   const prices = await getLatestPrices(all.map((a) => a.id));
 
+  // Whether the registry query succeeded, as distinct from returning nothing.
+  const registryAnswered = assetsResult.state !== "UNAVAILABLE";
+
   const typeCounts = new Map<AssetType, number>();
   for (const a of all) typeCounts.set(a.asset_type, (typeCounts.get(a.asset_type) ?? 0) + 1);
 
@@ -85,6 +89,16 @@ export default async function AssetsPage({
     }
   });
 
+  /**
+   * What an activity cell says when it has nothing in it.
+   *
+   * NONE is a measurement: the window was queried and held no transfer. Until
+   * the index reaches this window there is no measurement to report, so the
+   * cell says what is being waited on instead of asserting a zero.
+   */
+  const activityPending = activity.state === "INDEXING" || activity.state === "UNAVAILABLE";
+  const absentActivity = activityPending ? presentLabel(activity.state, "activity") : "NONE";
+
   const href = (next: Partial<{ q: string; type: string; sort: string; w: string }>) => {
     const sp = new URLSearchParams();
     const q = next.q ?? params.q;
@@ -108,7 +122,15 @@ export default async function AssetsPage({
               is identified from its canonical on-chain name, never from its symbol.
             </>
           }
-          aside={<StateTag state={assetsResult.state} label={`${integer(all.length)} INDEXED`} />}
+          aside={
+            <StateTag
+              state={assetsResult.state}
+              surface="registry"
+              /* A count of 0 INDEXED would be a claim about the chain. Until the
+                 registry query returns rows, the chip says what it is doing. */
+              label={all.length ? `${integer(all.length)} INDEXED` : undefined}
+            />
+          }
         />
 
         <div className="mt-6 flex flex-col gap-4">
@@ -116,11 +138,28 @@ export default async function AssetsPage({
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
             <ChipGroup label="Type">
-              <ChipLink href={href({ type: undefined })} active={!typeFilter} count={all.length}>
+              {/*
+                A count is shown only when the registry actually answered. An
+                empty list because the index has nothing yet is a real zero; an
+                empty list because the query failed is not, and both arrive here
+                as `all.length === 0`. Rendering "0" in the second case states a
+                fact about the chain that was never measured, so the chip simply
+                carries no count until the registry is readable.
+              */}
+              <ChipLink
+                href={href({ type: undefined })}
+                active={!typeFilter}
+                count={registryAnswered ? all.length : undefined}
+              >
                 ALL
               </ChipLink>
               {ASSET_TYPES.map((t) => (
-                <ChipLink key={t} href={href({ type: t })} active={typeFilter === t} count={typeCounts.get(t) ?? 0}>
+                <ChipLink
+                  key={t}
+                  href={href({ type: t })}
+                  active={typeFilter === t}
+                  count={registryAnswered ? (typeCounts.get(t) ?? 0) : undefined}
+                >
                   {ASSET_TYPE_LABEL[t]}
                 </ChipLink>
               ))}
@@ -170,14 +209,14 @@ export default async function AssetsPage({
                             <Sparkline series={act.buckets} tone="muted" label={`${a.symbol} transfer rate`} />
                           </span>
                         ) : null}
-                        <Value value={act ? integer(act.transfers) : null} absent="NONE" />
+                        <Value value={act ? integer(act.transfers) : null} absent={absentActivity} />
                       </div>
                     </LedgerCell>
                     <LedgerCell column={COLUMNS[4]}>
-                      <Value value={act ? compact(act.volume) : null} absent="NONE" />
+                      <Value value={act ? compact(act.volume) : null} absent={absentActivity} />
                     </LedgerCell>
                     <LedgerCell column={COLUMNS[5]}>
-                      <Value value={act ? integer(act.counterparties) : null} absent="NONE" />
+                      <Value value={act ? integer(act.counterparties) : null} absent={absentActivity} />
                     </LedgerCell>
                     <LedgerCell column={COLUMNS[6]}>
                       <Value value={act?.lastSeen ? relativeTime(act.lastSeen, now) : null} absent="—" />
@@ -193,12 +232,11 @@ export default async function AssetsPage({
             ) : (
               <LedgerEmpty
                 state={all.length ? "EMPTY" : assetsResult.state}
-                title={all.length ? "No asset matches this filter" : "No asset indexed yet"}
-                detail={
-                  all.length
-                    ? "Clear the search or widen the type filter."
-                    : "Assets are discovered on-chain. The registry fills as the indexer observes Transfer logs."
-                }
+                surface="registry"
+                /* A filtered-out table is a measured result and says so. An
+                   unfilled registry is not, so the surface writes that line. */
+                title={all.length ? "No asset matches this filter" : undefined}
+                detail={all.length ? "Clear the search or widen the type filter." : undefined}
               />
             )}
           </Ledger>

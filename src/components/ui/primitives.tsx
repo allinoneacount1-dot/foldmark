@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
-import { type DataState, STATE_LABEL, type Provenance } from "@/lib/data-state";
+import { type DataState, type Provenance } from "@/lib/data-state";
+import { present, presentMissing, type Surface } from "@/lib/presentation-state";
 
 /* ---------------------------------------------------------------- surface */
 
@@ -27,11 +28,14 @@ export function PanelHeader({
   meta,
   state,
   action,
+  surface = "generic",
 }: {
   title: string;
   meta?: ReactNode;
   state?: DataState;
   action?: ReactNode;
+  /** What this panel holds, so its chip says the honest thing for that kind of value. */
+  surface?: Surface;
 }) {
   return (
     <header className="flex items-center justify-between gap-3 border-b border-rule px-4 py-2.5">
@@ -40,7 +44,7 @@ export function PanelHeader({
         {meta ? <span className="label-s truncate text-ink-faint">{meta}</span> : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        {state ? <StateTag state={state} /> : null}
+        {state ? <StateTag state={state} surface={surface} /> : null}
         {action}
       </div>
     </header>
@@ -105,34 +109,83 @@ export function Lede({
 
 /* ----------------------------------------------------------------- state */
 
+/**
+ * How a state chip is coloured.
+ *
+ * UNAVAILABLE was red, which was right when the chip said DATA UNAVAILABLE and
+ * meant something had gone wrong. It now says SYNCING, and a red SYNCING reads
+ * as a failure the reader is supposed to act on. Waiting for a first
+ * observation is an ordinary state, so it is toned like one — quiet, not
+ * alarming. Red is kept for the surfaces that genuinely report a fault, which
+ * is the API and the status page.
+ */
 const STATE_TONE: Record<DataState, string> = {
   OK: "border-signal/30 text-signal",
   PARTIAL: "border-rule-strong text-ink-muted",
   STALE: "border-rule-strong text-ink-muted",
   EMPTY: "border-rule text-ink-faint",
   INDEXING: "border-rule text-ink-dim",
-  UNAVAILABLE: "border-negative/30 text-negative",
+  UNAVAILABLE: "border-rule text-ink-dim",
 };
 
-export function StateTag({ state, label }: { state: DataState; label?: string }) {
+/**
+ * The state chip.
+ *
+ * Says the state in the reader's terms. `surface` picks the sentence: the same
+ * missing value is a price not yet observed, a graph with nothing to draw, or a
+ * registry still filling, and those read differently to a person even though
+ * they are one state to the machine.
+ */
+export function StateTag({
+  state,
+  label,
+  surface = "generic",
+}: {
+  state: DataState;
+  label?: string;
+  surface?: Surface;
+}) {
   return (
     <span
       className={`inline-flex shrink-0 items-center gap-1.5 border px-1.5 py-0.5 font-mono text-label-s uppercase tracking-[0.18em] ${STATE_TONE[state]}`}
     >
       {state === "OK" ? <span aria-hidden className="h-1 w-1 bg-signal" /> : null}
-      {label ?? STATE_LABEL[state]}
+      {label ?? present(state, surface).label}
     </span>
   );
 }
 
 /**
- * What a metric shows when there is nothing real to show. This is the single
- * place the product is allowed to render an absent value.
+ * What a metric shows when there is nothing real to show.
+ *
+ * An em dash where the figure would be, and the state said underneath it. The
+ * dash is presentation — it occupies the slot without asserting anything. A
+ * number in that slot would be an assertion, which is why one never appears
+ * here however empty the screen looks.
+ *
+ * The previous behaviour put the raw state word in the value slot, so a column
+ * of metrics read as a column of the word UNAVAILABLE. That told a reader about
+ * our infrastructure when they had asked about a market.
  */
-export function AbsentValue({ state, className = "" }: { state: DataState; className?: string }) {
+export function AbsentValue({
+  state,
+  className = "",
+  surface = "generic",
+}: {
+  state: DataState;
+  className?: string;
+  surface?: Surface;
+}) {
+  // presentMissing, not present: the slot is empty, so a label claiming a last
+  // observation would describe something the reader cannot see.
+  const p = presentMissing(state, surface);
   return (
-    <span className={`font-mono text-data uppercase tracking-[0.14em] text-ink-faint ${className}`}>
-      {STATE_LABEL[state]}
+    <span className={`flex flex-col gap-1 ${className}`}>
+      <span aria-hidden className="font-mono text-data leading-none text-ink-dim">
+        &mdash;
+      </span>
+      <span className="font-mono text-label-s uppercase tracking-[0.16em] text-ink-faint">{p.label}</span>
+      <span className="sr-only">{p.detail}</span>
     </span>
   );
 }
@@ -167,22 +220,33 @@ export function Methodology({ children, label = "METHODOLOGY" }: { children: Rea
 
 /* ---------------------------------------------------------------- states */
 
+/**
+ * A region with nothing in it yet.
+ *
+ * `title` and `detail` are optional now: given a surface, the honest sentence
+ * for this state is already known, so a caller that has nothing more specific
+ * to say gets copy written for the case rather than a generic fallback. A
+ * caller that does know better still overrides both.
+ */
 export function EmptyState({
   state,
   title,
   detail,
   action,
+  surface = "generic",
 }: {
   state: DataState;
-  title: string;
+  title?: string;
   detail?: ReactNode;
   action?: ReactNode;
+  surface?: Surface;
 }) {
+  const p = present(state, surface);
   return (
     <div className="flex flex-col items-start gap-3 px-4 py-10 sm:px-6">
-      <StateTag state={state} />
-      <p className="font-display text-[1.25rem] leading-tight tracking-[-0.02em] text-ink">{title}</p>
-      {detail ? <div className="max-w-[52ch] text-body-s text-ink-muted">{detail}</div> : null}
+      <StateTag state={state} surface={surface} />
+      <p className="font-display text-[1.25rem] leading-tight tracking-[-0.02em] text-ink">{title ?? p.headline}</p>
+      <div className="max-w-[52ch] text-body-s text-ink-muted">{detail ?? p.detail}</div>
       {action}
     </div>
   );

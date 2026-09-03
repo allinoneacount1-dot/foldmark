@@ -406,6 +406,52 @@ body {
   animation: m-sweep 1.6s linear infinite;
 }
 
+/* --- instrument idle ----------------------------------------------------
+   A chart with no observations keeps its frame and shows that it is listening.
+   Two gestures, both deliberately valueless: one soft sweep across the whole
+   plot at a fixed cadence, and a receiver blink on the status line. Neither is
+   attached to a position, a magnitude or a direction, so nothing here can be
+   read as market movement — there is no market data to move. */
+
+@keyframes m-chart-scan {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+.m-chart-scan {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 44%,
+    color-mix(in srgb, var(--color-signal) 8%, transparent) 48%,
+    color-mix(in srgb, var(--color-signal) 24%, transparent) 50%,
+    color-mix(in srgb, var(--color-signal) 8%, transparent) 52%,
+    transparent 56%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  animation: m-chart-scan 5.6s var(--ease-inout) infinite;
+}
+
+@keyframes m-receiver {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+
+.m-receiver {
+  animation: m-receiver 2.4s var(--ease-inout) infinite;
+}
+
 /* ==========================================================================
    reduced motion — accessibility outranks pacing
    Everything above collapses to an instant state change. Nothing in the
@@ -427,5 +473,17 @@ body {
   .m-skeleton {
     background-image: none;
     background-color: var(--color-elevated);
+  }
+
+  /* The idle instrument stops sweeping and blinking. It loses nothing: the
+     frame, the status line and the sentence carry the whole message. */
+  .m-chart-scan {
+    background-image: none;
+    animation: none;
+  }
+
+  .m-receiver {
+    animation: none;
+    opacity: 1;
   }
 }

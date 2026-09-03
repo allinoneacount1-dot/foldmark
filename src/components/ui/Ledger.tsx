@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { type DataState } from "@/lib/data-state";
+import { type Surface } from "@/lib/presentation-state";
 import { EmptyState } from "@/components/ui/primitives";
 
 /**
@@ -118,20 +119,35 @@ export function LedgerCell({
   );
 }
 
+/**
+ * The designed empty row.
+ *
+ * A ledger with nothing in it keeps its headers and gets this: the table is
+ * still a table, still says what its columns would hold, and says in the
+ * reader's terms what is being waited on. `surface` picks that sentence — an
+ * asset registry still filling and a flow ledger with nothing moving are one
+ * state to the machine and two different facts to a person.
+ *
+ * `title` and `detail` are optional: with a surface, the honest line for this
+ * state is already written. Pass them only where the page knows something more
+ * specific than the surface does.
+ */
 export function LedgerEmpty({
   state,
   title,
   detail,
   action,
+  surface = "generic",
 }: {
   state: DataState;
-  title: string;
+  title?: string;
   detail?: ReactNode;
   action?: ReactNode;
+  surface?: Surface;
 }) {
   return (
     <div className="border-b border-rule-faint last:border-b-0">
-      <EmptyState state={state} title={title} detail={detail} action={action} />
+      <EmptyState state={state} title={title} detail={detail} action={action} surface={surface} />
     </div>
   );
 }

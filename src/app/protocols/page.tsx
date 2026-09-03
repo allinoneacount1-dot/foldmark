@@ -59,7 +59,15 @@ export default async function ProtocolsPage() {
           kicker={`PROTOCOL GRAPH · CHAIN ${CHAIN.id}`}
           title="Only what is verified appears as a protocol"
           lede="A protocol enters this registry when its contracts are identified and verified. Until then, FOLDMARK shows the contracts capital is actually flowing through and calls them what they are: unclassified."
-          aside={<StateTag state={protocols.state} label={`${integer(protocols.rows.length)} VERIFIED`} />}
+          aside={
+            <StateTag
+              state={protocols.state}
+              surface="protocol"
+              /* 0 VERIFIED is a claim about the chain, and it is only ours to
+                 make once the registry has actually answered. */
+              label={protocols.rows.length ? `${integer(protocols.rows.length)} VERIFIED` : undefined}
+            />
+          }
         />
 
         <div className="mt-6">
@@ -87,8 +95,16 @@ export default async function ProtocolsPage() {
             ) : (
               <LedgerEmpty
                 state={protocols.state}
-                title={`No protocol verified on chain ${CHAIN.id}`}
-                detail="FOLDMARK will not list a protocol name it cannot tie to a verified contract address. An empty registry is the honest state of this chain today, not a rendering failure."
+                surface="protocol"
+                /* "The registry is empty" is a measurement, and it belongs to
+                   the state where the registry actually answered. Before that,
+                   the honest line is how a protocol earns a row. */
+                title={protocols.state === "EMPTY" ? `No protocol verified on chain ${CHAIN.id}` : undefined}
+                detail={
+                  protocols.state === "EMPTY"
+                    ? "FOLDMARK will not list a protocol name it cannot tie to a verified contract address. An empty registry is the honest state of this chain today, not a rendering failure."
+                    : "A protocol earns a row here when its contracts are identified and verified against on-chain deployments. A name alone is never enough."
+                }
               />
             )}
           </Ledger>
@@ -132,7 +148,8 @@ export default async function ProtocolsPage() {
                   ) : (
                     <LedgerEmpty
                       state={activity.state}
-                      title="No high-degree address observed"
+                      surface="protocol"
+                      title={activity.state === "EMPTY" ? "No high-degree address observed" : undefined}
                       detail="An address appears here once at least three distinct counterparties transact with it inside the window."
                     />
                   )}
@@ -163,7 +180,7 @@ export default async function ProtocolsPage() {
                 </Panel>
 
                 <Panel>
-                  <PanelHeader title="KNOWN CONTRACTS" state={contracts.state} />
+                  <PanelHeader title="KNOWN CONTRACTS" state={contracts.state} surface="protocol" />
                   {contracts.rows.length ? (
                     <ul className="max-h-[18rem] overflow-y-auto">
                       {contracts.rows.map((c) => (
@@ -181,8 +198,9 @@ export default async function ProtocolsPage() {
                   ) : (
                     <EmptyState
                       state={contracts.state}
-                      title="No contract registered"
-                      detail="The contracts table is the input to protocol classification. It is empty for this chain."
+                      surface="protocol"
+                      title={contracts.state === "EMPTY" ? "No contract registered" : undefined}
+                      detail="The contracts registry is the input to protocol classification. An address enters it once a deployment is identified."
                     />
                   )}
                 </Panel>

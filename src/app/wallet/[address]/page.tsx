@@ -169,12 +169,12 @@ export default async function WalletPage({
 
       <Tape label="Wallet position">
         {/* Counts, not amounts: this line summarises a wallet across assets. */}
-        <TapeCell label={`RECEIVED ${window}`} measurement={m(transfersIn)} format={(v) => integer(Number(v))} />
-        <TapeCell label={`SENT ${window}`} measurement={m(transfersOut)} format={(v) => integer(Number(v))} />
+        <TapeCell label={`RECEIVED ${window}`} surface="wallet" measurement={m(transfersIn)} format={(v) => integer(Number(v))} />
+        <TapeCell label={`SENT ${window}`} surface="wallet" measurement={m(transfersOut)} format={(v) => integer(Number(v))} />
         <TapeStatic label="NET FLOW" value="PER ASSET" />
-        <TapeCell label="TRANSFERS" measurement={m(rows.length)} format={(v) => integer(Number(v))} />
-        <TapeCell label="COUNTERPARTIES" measurement={m(counterparties.size)} format={(v) => integer(Number(v))} />
-        <TapeCell label="ASSETS TOUCHED" measurement={m(exposure.size)} format={(v) => integer(Number(v))} />
+        <TapeCell label="TRANSFERS" surface="wallet" measurement={m(rows.length)} format={(v) => integer(Number(v))} />
+        <TapeCell label="COUNTERPARTIES" surface="wallet" measurement={m(counterparties.size)} format={(v) => integer(Number(v))} />
+        <TapeCell label="ASSETS TOUCHED" surface="wallet" measurement={m(exposure.size)} format={(v) => integer(Number(v))} />
         <TapeStatic label="PORTFOLIO VALUE" value="NO ORACLE" />
         <TapeStatic label="UPDATED" value={relativeTime(indexer.updatedAt, now)} />
       </Tape>
@@ -188,7 +188,7 @@ export default async function WalletPage({
               left={
                 <div className="flex flex-col gap-6">
                   <Panel>
-                    <PanelHeader title="ASSET EXPOSURE" meta={window} state={transfers.state} />
+                    <PanelHeader title="ASSET EXPOSURE" meta={window} state={transfers.state} surface="wallet" />
                     <div className="flex flex-col">
                       {rankedExposure.map((e) => (
                         <div key={e.asset!.id} className="border-b border-rule-faint px-4 py-3 last:border-b-0">
@@ -277,7 +277,7 @@ export default async function WalletPage({
                           </LedgerRow>
                         ))
                       ) : (
-                        <LedgerEmpty state={transfers.state} title="No counterparty in window" />
+                        <LedgerEmpty state={transfers.state} surface="flow" />
                       )}
                     </Ledger>
                   </div>
@@ -296,7 +296,7 @@ export default async function WalletPage({
                   </Figure>
 
                   <Panel>
-                    <PanelHeader title="TOP RELATIONSHIPS" meta={window} state={transfers.state} />
+                    <PanelHeader title="TOP RELATIONSHIPS" meta={window} state={transfers.state} surface="flow" />
                     <div className="px-4 py-2">
                       {rankedCounterparties.slice(0, 6).map((c) => (
                         <MagnitudeRow
@@ -318,7 +318,7 @@ export default async function WalletPage({
                   <div className="border border-rule">
                     <div className="flex items-center justify-between border-b border-rule px-4 py-2.5">
                       <span className="label text-ink">DATA CONDITION</span>
-                      <StateTag state={transfers.state} />
+                      <StateTag state={transfers.state} surface="wallet" />
                     </div>
                     <Methodology>
                       Every figure is folded at request time from transfers where this address appears as sender or
@@ -332,10 +332,14 @@ export default async function WalletPage({
             />
           ) : (
             <Panel>
-              <PanelHeader title="NO ACTIVITY IN WINDOW" state={transfers.state} />
+              {/* The title names the region; the chip says the state in the
+                  reader's terms. "NO ACTIVITY IN WINDOW" as a title was a
+                  measurement, and while the index has not reached this address
+                  it is not one we have taken. */}
+              <PanelHeader title="OBSERVED ACTIVITY" meta={window} state={transfers.state} surface="wallet" />
               <EmptyState
                 state={transfers.state}
-                title="Nothing observed for this address"
+                surface="wallet"
                 detail={
                   <>
                     The indexer has recorded no transfer involving this address inside the {window} window. It may be

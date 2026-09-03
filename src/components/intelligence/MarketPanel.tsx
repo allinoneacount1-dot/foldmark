@@ -5,6 +5,7 @@ import type { MarketSnapshot, Freshness } from "@/server/market-data/types";
 import { LIQUIDITY_BASIS_LABEL, LIQUIDITY_BASIS_NOTE } from "@/server/market-data/types";
 import type { DataState } from "@/lib/data-state";
 import { CHAIN } from "@/config/site";
+import { presentMissing } from "@/lib/presentation-state";
 
 /**
  * The data-source inspector.
@@ -39,13 +40,16 @@ export function MarketPanel({
   now: number;
 }) {
   if (!snapshot?.canonical) {
+    // The state is still UNAVAILABLE — the API says so and every internal
+    // decision reads it. What changes is the sentence: a reader asked about a
+    // market, not about whether our pipeline has run yet.
     return (
       <Panel>
-        <PanelHeader title="MARKET PRICE" meta={symbol} state="UNAVAILABLE" />
+        <PanelHeader title="MARKET PRICE" meta={symbol} state="UNAVAILABLE" surface="price" />
         <EmptyState
           state="UNAVAILABLE"
-          title="No source quoted this asset"
-          detail={`No market source returned a usable price for this contract on chain ${CHAIN.id}. Nothing is estimated in its place.`}
+          surface="price"
+          detail={`No venue has been observed quoting this contract on chain ${CHAIN.id} yet. Nothing is estimated in its place — a price appears the moment one is observed.`}
         />
       </Panel>
     );
@@ -145,10 +149,18 @@ export function MarketPanel({
 /** A compact price with its source, for a tape or a header row. */
 export function PriceWithSource({ snapshot, now }: { snapshot: MarketSnapshot | null; now: number }) {
   if (!snapshot?.canonical) {
+    // An em dash where the price goes, and what is being waited for underneath.
+    // A number here would be the single most damaging thing this component
+    // could render, so the slot holds a dash and nothing else ever fills it.
+    const pending = presentMissing("UNAVAILABLE", "price");
     return (
       <div className="flex flex-col gap-0.5">
         <span className="label-s">DEX SPOT</span>
-        <span className="font-mono text-data uppercase tracking-[0.14em] text-ink-faint">DATA UNAVAILABLE</span>
+        <span aria-hidden className="font-mono text-data leading-none text-ink-dim">
+          &mdash;
+        </span>
+        <span className="font-mono text-label-s uppercase tracking-[0.16em] text-ink-faint">{pending.label}</span>
+        <span className="sr-only">{pending.detail}</span>
       </div>
     );
   }

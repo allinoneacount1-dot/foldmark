@@ -871,7 +871,7 @@ export async function getProtocols(): Promise<{ state: DataState; rows: Protocol
   const client = db();
   if (!client) return { state: "UNAVAILABLE", rows: [] };
   const data = await client`
-    select id, name, category
+    select id, name, category, website, verified
       from protocols
      order by name
   `.catch(() => null);
@@ -880,12 +880,11 @@ export async function getProtocols(): Promise<{ state: DataState; rows: Protocol
     id: r.id as string,
     name: r.name as string,
     category: (r.category as string | null) ?? "",
-    // The canonical schema records no protocol verification and no website, so
-    // neither can be asserted here. `verified` stays false — the direction that
-    // claims nothing — rather than being read from a column that would have to
-    // be invented to hold it.
-    verified: false,
-    website: null,
+    // Read, not assumed. A protocol is verified when someone confirmed its
+    // contracts; the column records whether that happened, and defaults to
+    // false so an unreviewed row claims nothing.
+    verified: r.verified === true,
+    website: (r.website as string | null) ?? null,
   }));
   return { state: rows.length ? "OK" : "INDEXING", rows };
 }

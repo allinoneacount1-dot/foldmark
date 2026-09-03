@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Shell, Split, PageHead } from "@/components/layout/Frame";
-import { Panel, PanelHeader, EmptyState, Methodology, StateTag } from "@/components/ui/primitives";
+import { Panel, PanelHeader, EmptyState, Methodology, StateTag, AbsentValue } from "@/components/ui/primitives";
+import type { DataState } from "@/lib/data-state";
+import type { Surface } from "@/lib/presentation-state";
 import { ExplorerLink } from "@/components/ui/controls";
 import { Figure } from "@/components/ui/Figure";
 import { TopologyView } from "@/components/graph/TopologyView";
@@ -50,6 +52,43 @@ export default async function ProtocolPage({ params }: { params: Promise<{ id: s
 
   const assetsTouched = new Set(rows.map((r) => r.asset_id).filter(Boolean));
 
+  /**
+   * The four figures at the head of the page.
+   *
+   * A count of zero is only printable once the query that would have counted
+   * actually ran; before that the tile prints a dash and names what it waits
+   * for. Contracts wait on classification, transfers on the index, and
+   * counterparties on observed flow — three different sentences.
+   */
+  const observedActivity = activity.state !== "INDEXING" && activity.state !== "UNAVAILABLE";
+  const observedContracts = contracts.state !== "INDEXING" && contracts.state !== "UNAVAILABLE";
+  const tiles: { label: string; value: string | null; state: DataState; surface: Surface }[] = [
+    {
+      label: "CONTRACTS",
+      value: observedContracts ? integer(own.length) : null,
+      state: contracts.state,
+      surface: "protocol",
+    },
+    {
+      label: "TRANSFERS 7D",
+      value: observedActivity ? integer(rows.length) : null,
+      state: activity.state,
+      surface: "activity",
+    },
+    {
+      label: "COUNTERPARTIES",
+      value: observedActivity ? integer(peers.length) : null,
+      state: activity.state,
+      surface: "flow",
+    },
+    {
+      label: "ASSETS TOUCHED",
+      value: observedActivity ? integer(assetsTouched.size) : null,
+      state: activity.state,
+      surface: "activity",
+    },
+  ];
+
   return (
     <Shell>
       <div className="band-dense">
@@ -61,21 +100,16 @@ export default async function ProtocolPage({ params }: { params: Promise<{ id: s
         />
 
         <div className="mt-6 grid gap-px bg-rule sm:grid-cols-4">
-          {[
-            ["CONTRACTS", integer(own.length)],
-            ["TRANSFERS 7D", rows.length ? integer(rows.length) : null],
-            ["COUNTERPARTIES", peers.length ? integer(peers.length) : null],
-            ["ASSETS TOUCHED", assetsTouched.size ? integer(assetsTouched.size) : null],
-          ].map(([label, value]) => (
-            <div key={label as string} className="bg-void p-4">
-              <p className="label-s">{label}</p>
-              <p
-                className={`tabular mt-1.5 font-mono text-data-l ${
-                  value ? "text-ink" : "uppercase tracking-[0.14em] text-ink-faint"
-                }`}
-              >
-                {value ?? "INDEXING"}
-              </p>
+          {tiles.map((t) => (
+            <div key={t.label} className="bg-void p-4">
+              <p className="label-s">{t.label}</p>
+              {t.value !== null ? (
+                <p className="tabular mt-1.5 font-mono text-data-l text-ink">{t.value}</p>
+              ) : (
+                <div className="mt-1.5">
+                  <AbsentValue state={t.state} surface={t.surface} />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -87,7 +121,11 @@ export default async function ProtocolPage({ params }: { params: Promise<{ id: s
             left={
               <Figure
                 index="01"
-                caption={`Relationships involving ${protocol.name} contracts over 7D — ${integer(graph.shown.nodes)} nodes, ${integer(graph.shown.edges)} edges.`}
+                caption={
+                  graph.shown.nodes > 0
+                    ? `Relationships involving ${protocol.name} contracts over 7D — ${integer(graph.shown.nodes)} nodes, ${integer(graph.shown.edges)} edges.`
+                    : `Relationships involving ${protocol.name} contracts over 7D.`
+                }
                 provenance="ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS"
               >
                 <div className="flex h-[24rem] min-h-0">
@@ -101,7 +139,7 @@ export default async function ProtocolPage({ params }: { params: Promise<{ id: s
             right={
               <div className="flex flex-col gap-6">
                 <Panel>
-                  <PanelHeader title="CONTRACTS" state={own.length ? "OK" : "INDEXING"} />
+                  <PanelHeader title="CONTRACTS" state={own.length ? "OK" : "INDEXING"} surface="protocol" />
                   {own.length ? (
                     <ul>
                       {own.map((c) => (
@@ -116,6 +154,7 @@ export default async function ProtocolPage({ params }: { params: Promise<{ id: s
                   ) : (
                     <EmptyState
                       state="INDEXING"
+                      surface="protocol"
                       title="No contract registered"
                       detail="This protocol has a registry entry but no address attached to it yet, so no activity can be attributed to it."
                     />
@@ -123,7 +162,12 @@ export default async function ProtocolPage({ params }: { params: Promise<{ id: s
                 </Panel>
 
                 <Panel>
-                  <PanelHeader title="TOP COUNTERPARTIES" meta="7D" state={peers.length ? activity.state : "INDEXING"} />
+                  <PanelHeader
+                    title="TOP COUNTERPARTIES"
+                    meta="7D"
+                    state={peers.length ? activity.state : "INDEXING"}
+                    surface="flow"
+                  />
                   {peers.length ? (
                     <ul>
                       {peers.slice(0, 8).map((p) => (
@@ -144,7 +188,7 @@ export default async function ProtocolPage({ params }: { params: Promise<{ id: s
                       ))}
                     </ul>
                   ) : (
-                    <EmptyState state={activity.state} title="No counterparty observed" />
+                    <EmptyState state={activity.state} surface="flow" />
                   )}
                 </Panel>
 
