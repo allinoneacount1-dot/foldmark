@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { db } from "@/server/db/client";
 import { collectObservations, persistObservations, writeMarketState, TIER_INTERVAL_MS, type Tier } from "@/server/market-data";
 import { reconcileAll } from "@/server/market-data/reconcile";
 import { acquireLease, releaseLease } from "@/server/market-data/lease";
@@ -92,16 +92,26 @@ export async function ingestPrices(limit = 40): Promise<IngestionResult> {
     durationMs: 0,
   };
 
-  if (!isSupabaseConfigured() || !supabase) return { ...empty, durationMs: Date.now() - started };
-  const sb = supabase;
+  const sql = db();
+  if (!sql) return { ...empty, durationMs: Date.now() - started };
 
-  const { data: assets, error } = await sb
-    .from("assets")
-    .select("id, contract_address")
-    .eq("chain_id", CHAIN.id)
-    .limit(limit);
+  // A failed registry read is indistinguishable, for this sweep's purposes,
+  // from an empty registry: there is nothing to refresh either way, and a
+  // sweep that cannot name its assets must not spend a provider call guessing.
+  let assets: { id: string; contract_address: string }[];
+  try {
+    const rows = await sql`
+      select id, contract_address
+      from assets
+      where chain_id = ${CHAIN.id}
+      limit ${limit}
+    `;
+    assets = rows.map((r) => ({ id: String(r.id), contract_address: String(r.contract_address) }));
+  } catch {
+    return { ...empty, durationMs: Date.now() - started };
+  }
 
-  if (error || !assets?.length) return { ...empty, durationMs: Date.now() - started };
+  if (!assets.length) return { ...empty, durationMs: Date.now() - started };
 
   const now = Date.now();
   const byTier: Record<Tier, number> = { ACTIVE: 0, HOT: 0, INDEXED: 0, DORMANT: 0 };
@@ -173,13 +183,19 @@ export async function ingestPrices(limit = 40): Promise<IngestionResult> {
    * real fetch, in the one process that owns the decision — is what allows
    * every page and API route to read a price without touching the network.
    */
-  const { data: assetRows } = await sb
-    .from("assets")
-    .select("id, contract_address")
-    .in("contract_address", [...snapshots.keys()]);
-  const idByAddress = new Map(
-    (assetRows ?? []).map((a) => [String(a.contract_address).toLowerCase(), a.id as string]),
-  );
+  const snapshotContracts = [...snapshots.keys()];
+  const idByAddress = new Map<string, string>();
+  try {
+    const assetRows = await sql`
+      select id, contract_address
+      from assets
+      where contract_address = any(${snapshotContracts}::text[])
+    `;
+    for (const a of assetRows) idByAddress.set(String(a.contract_address).toLowerCase(), String(a.id));
+  } catch {
+    // Without ids nothing can be published, and writeMarketState is left to
+    // report zero rows rather than this sweep inventing a mapping.
+  }
   const stateWritten = await writeMarketState(snapshots, idByAddress);
 
   return {

@@ -21,6 +21,26 @@ type Release = {
 const RELEASES: Release[] = [
   {
     date: "2026-09-04",
+    title: "Storage migration — Neon Postgres and a direct SQL layer",
+    added: [
+      "db/migrations/0001_foldmark_schema.sql — the entire schema in one idempotent file, written as the shape the database should have rather than as a replay of how it was arrived at.",
+      "scripts/migrate.mjs, with npm run db:migrate to apply anything not yet recorded and npm run db:status to report what is applied without changing it. Files run in filename order, each inside its own transaction, recorded in a ledger so a re-run is a no-op.",
+      "src/server/db/client.ts — one server-side entry point to Postgres: a tagged-template client for statements, a pooled client for transactions and the long-running runner, and a health probe.",
+    ],
+    changed: [
+      "Storage is Neon Postgres, reached with SQL this repository owns. Values interpolated into a tagged template are sent as bound parameters, so no code path builds a statement by concatenating a caller's value.",
+      "Writes are ON CONFLICT upserts against the keys declared in the schema, replacing the SDK's upsert options. A replay of a range is still a no-op.",
+      "The driver returns numeric and bigint columns as strings and timestamps as Date objects, so both are converted explicitly at the boundary rather than assumed. A timestamp silently arriving as an object is the kind of defect that breaks every comparison downstream while every page still renders.",
+      "The persistent runner is documented as what it actually is: the pipeline's primary writer. The daily Vercel cron calls the same ingest route and is a fallback — one pass a day cannot hold a five-second log window.",
+      "DEX Screener is listed as DISABLED rather than LIVE. It is implemented and is not called unless a deployment sets DEXSCREENER_ENABLED, pending a review of terms that restrict redistribution and competing products.",
+      "Docs, README and the runner install script describe the Neon pipeline; the architecture diagram now shows chain → persistent runner → Postgres → Vercel → users and agents.",
+    ],
+    removed: [
+      "The Supabase client and its keys, along with the vendor-specific error-code checks, single-row helpers and row-level-security commentary that surrounded them.",
+    ],
+  },
+  {
+    date: "2026-09-04",
     title: "Product completion — design system, dashboard, docs",
     added: [
       "Design token layer: four surfaces, four ink steps, three hairlines, a three-tier type scale and a named rhythm scale.",

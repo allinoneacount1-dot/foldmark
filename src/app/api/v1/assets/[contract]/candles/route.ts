@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAssetByAddress, getTransfersSince, since } from "@/lib/queries";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { db } from "@/server/db/client";
 import { aggregateCandles, aggregateVolume, defaultInterval, supportedIntervals, INTERVALS, type Interval } from "@/lib/ohlc";
 import { fromBaseUnits } from "@/lib/format";
 import { WINDOWS, type FlowWindow } from "@/config/site";
@@ -57,16 +57,20 @@ export async function GET(req: Request, { params }: { params: Promise<{ contract
   let seriesSource = "canonical";
   let seriesNote: string;
 
-  if (isSupabaseConfigured() && supabase) {
+  const sql = db();
+
+  if (sql) {
     if (seriesKind === "canonical") {
-      const { data } = await supabase
-        .from("canonical_prices")
-        .select("price, observed_at, source")
-        .eq("asset_id", asset.id)
-        .gte("observed_at", from)
-        .order("observed_at", { ascending: true })
-        .limit(5000);
-      priceRows = (data ?? []) as typeof priceRows;
+      priceRows = await priceSeries(
+        () => sql`
+          select price, observed_at, source
+          from canonical_prices
+          where asset_id = ${asset.id}
+            and observed_at >= ${from}::timestamptz
+          order by observed_at asc
+          limit 5000
+        `,
+      );
       const sources = [...new Set(priceRows.map((r) => r.source))];
       seriesSource = sources.length === 1 ? sources[0] : "canonical";
       seriesNote =
@@ -74,15 +78,17 @@ export async function GET(req: Request, { params }: { params: Promise<{ contract
           ? `The canonical selection changed source during this range (${sources.join(", ")}). Each point is one real observation from the named source; the series is continuous in time, not in venue.`
           : "Every point is the observation reconciliation selected, from a single source across this range.";
     } else {
-      const { data } = await supabase
-        .from("price_observations")
-        .select("price, observed_at, source")
-        .eq("asset_id", asset.id)
-        .eq("source", requestedSource)
-        .gte("observed_at", from)
-        .order("observed_at", { ascending: true })
-        .limit(5000);
-      priceRows = (data ?? []) as typeof priceRows;
+      priceRows = await priceSeries(
+        () => sql`
+          select price, observed_at, source
+          from price_observations
+          where asset_id = ${asset.id}
+            and source = ${requestedSource}
+            and observed_at >= ${from}::timestamptz
+          order by observed_at asc
+          limit 5000
+        `,
+      );
       seriesSource = requestedSource!;
       seriesNote = `Raw observations from ${requestedSource} only. No other source contributes to this series.`;
     }
@@ -147,4 +153,32 @@ export async function GET(req: Request, { params }: { params: Promise<{ contract
     methodology:
       "OHLC is aggregated deterministically per bucket from ONE coherent price series: open = first observation, high = maximum, low = minimum, close = last. The default series is canonical_prices, where reconciliation selected a single observation per moment; quotes from different providers are never pooled into the same candle, because that would invent a high and a low no venue printed. Pass ?source=<provider> for that provider's own raw series. Buckets without an observation produce no candle and nothing is carried forward. Volume is the sum of observed transfer amounts in the bucket, in token units — it is not trade volume.",
   });
+}
+
+/**
+ * Run one price-series query and normalise what Postgres returns.
+ *
+ * Two conversions are not cosmetic. `price` is a numeric column and arrives as
+ * a string, so arithmetic on it would concatenate rather than add. `observed_at`
+ * is timestamptz and arrives as a Date, while every consumer downstream —
+ * bucketing, interval detection, the JSON response — is written against an ISO
+ * string. Both are converted once, here, rather than guessed at each use.
+ *
+ * A failed query degrades to an empty series rather than throwing: a chart with
+ * no points reads INDEXING, which is true, whereas a 500 tells the reader
+ * nothing about the data.
+ */
+async function priceSeries(
+  run: () => Promise<Record<string, unknown>[]>,
+): Promise<{ price: number; observed_at: string; source: string }[]> {
+  try {
+    const rows = await run();
+    return rows.map((r) => ({
+      price: Number(r.price),
+      observed_at: r.observed_at instanceof Date ? r.observed_at.toISOString() : String(r.observed_at),
+      source: String(r.source),
+    }));
+  } catch {
+    return [];
+  }
 }

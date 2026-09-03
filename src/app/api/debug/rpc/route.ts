@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ROBINHOOD_CHAIN } from "@/lib/chain";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { db } from "@/server/db/client";
 
 export const dynamic = "force-dynamic";
 
@@ -30,10 +30,14 @@ export async function GET() {
   });
 
   const storage = await timed(async () => {
-    if (!isSupabaseConfigured() || !supabase) throw new Error("not configured");
-    const { error, count } = await supabase.from("assets").select("id", { count: "exact", head: true });
-    if (error) throw new Error(error.message.slice(0, 120));
-    return `${count ?? 0} assets`;
+    const sql = db();
+    if (!sql) throw new Error("not configured");
+    // An exact count, not an estimate: this probe exists to prove the database
+    // answered a real query, and a planner estimate would answer even when the
+    // table is unreadable.
+    const rows = await sql`select count(*) as count from assets`;
+    // count() is bigint, which arrives as a string.
+    return `${Number(rows[0]?.count ?? 0)} assets`;
   });
 
   const healthy = rpc.ok && storage.ok;

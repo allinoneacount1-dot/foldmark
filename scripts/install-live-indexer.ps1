@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    Install the FOLDMARK live indexer as an always-on Windows scheduled task.
+    Install the FOLDMARK live indexer — the pipeline's primary writer — as an
+    always-on Windows scheduled task.
 
 .DESCRIPTION
     The free public RPC keeps roughly 48 blocks of logs — about five seconds at
@@ -10,8 +11,23 @@
     way to index this chain on a free tier is to follow the head continuously.
 
     Serverless hosting cannot hold a WebSocket open for that, so the follower
-    runs as a process. This script registers it as a Windows scheduled task that
-    starts at boot, restarts if it dies, and writes a rotating log — the three
+    runs as a process. That makes this machine the primary writer in the
+    pipeline:
+
+        Robinhood Chain (RPC + WSS)
+            -> this persistent runner
+            -> the deployment's /api/cron/index route
+            -> Neon Postgres
+            -> Vercel (Next.js UI + FOLDMARK API)
+            -> users and agents
+
+    The daily Vercel cron calls the same route, so nothing is lost if this
+    machine is off — but one pass a day cannot stay inside a five-second log
+    window, so it is a fallback, not the pipeline. While this task is stopped,
+    chain coverage is reported as gapped rather than quietly interpolated.
+
+    This script registers the follower as a Windows scheduled task that starts
+    at boot, restarts if it dies, and writes a rotating log — the three
     properties that separate "running" from "running unattended".
 
     Nothing here needs administrator rights: the task is registered for the
@@ -21,6 +37,8 @@
 
 .PARAMETER BaseUrl
     The FOLDMARK deployment whose /api/cron/index endpoint drives ingestion.
+    That deployment holds DATABASE_URL and does the writing; this machine talks
+    to it over HTTP only and never opens a database connection of its own.
     Defaults to http://localhost:3000.
 
 .PARAMETER TaskName
@@ -51,6 +69,10 @@
 
     then sign out and back in so the scheduled task inherits it. Do not put it
     in a file inside the repository.
+
+    CRON_SECRET is the only secret this machine needs. The database connection
+    string belongs to the deployment named by -BaseUrl; it is never set here,
+    never passed as a parameter, and never written into the generated wrapper.
 #>
 
 [CmdletBinding()]
@@ -204,7 +226,7 @@ Register-ScheduledTask `
     -Action $action `
     -Trigger $trigger `
     -Settings $settings `
-    -Description "Follows the Robinhood Chain head over WebSocket and drives FOLDMARK ingestion. Installed by scripts/install-live-indexer.ps1." | Out-Null
+    -Description "Follows the Robinhood Chain head over WebSocket and drives FOLDMARK ingestion into Neon Postgres via the deployment's ingest route. Primary writer; the daily Vercel cron is only a fallback. Installed by scripts/install-live-indexer.ps1." | Out-Null
 
 Start-ScheduledTask -TaskName $TaskName
 

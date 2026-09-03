@@ -1,6 +1,6 @@
 import { createPublicClient, http, parseAbi, parseAbiItem, type Log } from "viem";
 import { robinhoodChain } from "@/lib/wagmi";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { db, query, isDatabaseConfigured } from "@/server/db/client";
 import {
   activeEndpoint as activeRpcEndpoint,
   clampToServableRange,
@@ -41,8 +41,21 @@ const MAX_DISCOVERY_PER_RUN = 3;
 /** Addresses per window written to flow_windows. Ranked by observed value moved. */
 const FLOW_TOP_N = 200;
 
+/**
+ * Rows per INSERT statement.
+ *
+ * Postgres accepts at most 65535 bound parameters in one statement, and every
+ * value here is bound rather than spliced into the text. Chunking keeps the
+ * parameter count far below that ceiling no matter how dense a block range
+ * turns out to be.
+ */
+const INSERT_CHUNK_ROWS = 500;
+
 type TransferLog = Log<bigint, number, false, typeof TRANSFER_EVENT>;
 type Client = ReturnType<typeof createPublicClient>;
+
+/** An asset as the indexer needs it: identity, address, and its unit scale. */
+type KnownAsset = { id: string; contract_address: string; decimals: number };
 
 export type IndexerResult = {
   status: "INDEXED" | "NOTHING_SERVABLE";
@@ -62,6 +75,31 @@ export type IndexerResult = {
   backfilled: number;
   flows: { windows: number; addresses: number; skipped: boolean };
 };
+
+/* ------------------------------------------------------------ sql utilities */
+
+/**
+ * Placeholders for a multi-row VALUES list: `($1, $2, ...), ($3, $4, ...)`.
+ *
+ * The generated text contains only positions. Every actual value travels in the
+ * params array, so there is no path here by which a chain-supplied address or
+ * amount could become SQL text.
+ */
+function valuesPlaceholders(rowCount: number, columnCount: number): string {
+  const tuples: string[] = [];
+  for (let r = 0; r < rowCount; r += 1) {
+    const cells: string[] = [];
+    for (let c = 0; c < columnCount; c += 1) cells.push(`$${r * columnCount + c + 1}`);
+    tuples.push(`(${cells.join(", ")})`);
+  }
+  return tuples.join(", ");
+}
+
+function chunkRows<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
 
 /* -------------------------------------------------------------- log reading */
 
@@ -172,8 +210,8 @@ async function registerCandidate(
   client: Client,
   address: string,
 ): Promise<{ registered: boolean; assetId: string | null }> {
-  if (!isSupabaseConfigured() || !supabase) return { registered: false, assetId: null };
-  const sb = supabase;
+  const sql = db();
+  if (!sql) return { registered: false, assetId: null };
 
   try {
     const [symbol, name] = await Promise.all([
@@ -187,28 +225,40 @@ async function registerCandidate(
       .readContract({ address: address as `0x${string}`, abi: ERC20_ABI, functionName: "decimals" })
       .catch(() => 18);
 
-    const { data, error } = await sb
-      .from("assets")
-      .insert({
-        chain_id: robinhoodChain.id,
-        contract_address: address,
-        symbol: String(symbol).toUpperCase(),
-        name: String(name),
-        asset_type: "stock_token",
-        // Not verified. A name is not an identity.
-        verified: false,
-        verification_status: "CANDIDATE",
-        verification_source: "on-chain metadata heuristic",
-        verification_evidence:
-          "The contract's own name() contains the Robinhood Token marker. String similarity is not proof of issuer, so this stays a candidate until an authoritative contract list confirms the address.",
-        source: "Discovered on-chain from a Transfer log; identity read from contract metadata.",
-        decimals: Number(decimals) || 18,
-      })
-      .select("id")
-      .maybeSingle();
+    /**
+     * Not verified. A name is not an identity.
+     *
+     * `verified` is deliberately absent from this insert: the database derives
+     * it from verification_status in a trigger, so there is one source of truth
+     * for the claim rather than two that can disagree.
+     *
+     * DO NOTHING rather than DO UPDATE — an address already registered keeps
+     * whatever verification it has earned; a rediscovery must never demote a
+     * VERIFIED asset back to CANDIDATE.
+     */
+    const inserted = (await sql`
+      insert into assets (
+        chain_id, contract_address, symbol, name, asset_type,
+        verification_status, verification_source, verification_evidence, source, decimals
+      ) values (
+        ${robinhoodChain.id},
+        ${address},
+        ${String(symbol).toUpperCase()},
+        ${String(name)},
+        ${"stock_token"},
+        ${"CANDIDATE"},
+        ${"on-chain metadata heuristic"},
+        ${"The contract's own name() contains the Robinhood Token marker. String similarity is not proof of issuer, so this stays a candidate until an authoritative contract list confirms the address."},
+        ${"Discovered on-chain from a Transfer log; identity read from contract metadata."},
+        ${Number(decimals) || 18}
+      )
+      on conflict (chain_id, contract_address) do nothing
+      returning id
+    `) as { id: string }[];
 
-    if (error || !data) return { registered: false, assetId: null };
-    return { registered: true, assetId: data.id as string };
+    const row = inserted[0];
+    if (!row) return { registered: false, assetId: null };
+    return { registered: true, assetId: String(row.id) };
   } catch {
     return { registered: false, assetId: null };
   }
@@ -222,13 +272,20 @@ export async function runIndexer({
 }: {
   fromBlock: bigint;
   toBlock: bigint;
-}): Promise<IndexerResult | { error: "SUPABASE_NOT_CONFIGURED" }> {
-  if (!isSupabaseConfigured() || !supabase) return { error: "SUPABASE_NOT_CONFIGURED" as const };
-  const sb = supabase;
+}): Promise<IndexerResult | { error: "DATABASE_NOT_CONFIGURED" }> {
+  const sql = db();
+  if (!isDatabaseConfigured() || !sql) return { error: "DATABASE_NOT_CONFIGURED" as const };
   const client = createPublicClient({ chain: robinhoodChain, transport: http(activeRpcEndpoint()) });
 
-  const { data: knownAssets } = await sb.from("assets").select("id, contract_address, decimals").limit(200);
-  const known = new Map((knownAssets ?? []).map((a) => [String(a.contract_address).toLowerCase(), a]));
+  const knownAssets = (await sql`
+    select id, contract_address, decimals from assets limit 200
+  `) as { id: string; contract_address: string; decimals: number | string | null }[];
+  const known = new Map<string, KnownAsset>(
+    knownAssets.map((a) => [
+      String(a.contract_address).toLowerCase(),
+      { id: String(a.id), contract_address: String(a.contract_address), decimals: Number(a.decimals ?? 18) },
+    ]),
+  );
 
   /**
    * The free endpoint retains roughly 48 blocks of logs and refuses older
@@ -316,6 +373,8 @@ export async function runIndexer({
     tx_hash: string;
     log_index: number;
     block_number: number;
+    /** The chain a transfer was observed on. A row without it is unattributable. */
+    chain_id: number;
     asset_id: string | null;
     from_address: string;
     to_address: string;
@@ -341,6 +400,7 @@ export async function runIndexer({
       tx_hash: log.transactionHash,
       log_index: log.logIndex,
       block_number: Number(log.blockNumber),
+      chain_id: robinhoodChain.id,
       asset_id: assetId,
       from_address: fromAddr,
       to_address: toAddr,
@@ -356,22 +416,65 @@ export async function runIndexer({
   /**
    * The cursor moves only after the write is confirmed. A failed write leaves
    * the cursor where it was, so the range is retried rather than skipped.
+   *
+   * The write is idempotent on (tx_hash, log_index) — the only pair unique for
+   * a log — so re-reading a range costs nothing and duplicates nothing. DO
+   * NOTHING means a re-read of an already-indexed block returns no rows, and
+   * RETURNING is what tells us how many transfers were genuinely new rather
+   * than how many were offered.
    */
   let inserted = 0;
   let writeFailed = false;
   if (rows.length) {
-    const { error, count } = await sb
-      .from("transfers")
-      .upsert(rows, { onConflict: "tx_hash,log_index", ignoreDuplicates: true, count: "exact" });
-    if (error) writeFailed = true;
-    else inserted = count ?? rows.length;
+    try {
+      for (const batch of chunkRows(rows, INSERT_CHUNK_ROWS)) {
+        const params: unknown[] = [];
+        for (const r of batch) {
+          params.push(
+            r.tx_hash,
+            r.log_index,
+            r.block_number,
+            r.chain_id,
+            r.asset_id,
+            r.from_address,
+            r.to_address,
+            r.amount,
+            r.timestamp,
+          );
+        }
+        const written = await query<{ tx_hash: string }>(
+          `insert into transfers (
+             tx_hash, log_index, block_number, chain_id, asset_id,
+             from_address, to_address, amount, "timestamp"
+           ) values ${valuesPlaceholders(batch.length, 9)}
+           on conflict (tx_hash, log_index) do nothing
+           returning tx_hash`,
+          params,
+        );
+        inserted += (written ?? []).length;
+      }
+    } catch {
+      writeFailed = true;
+      inserted = 0;
+    }
   }
 
   if (walletSeen.size) {
-    await sb.from("wallets").upsert(
-      [...walletSeen].map(([address, last_seen]) => ({ address, last_seen })),
-      { onConflict: "address" },
-    );
+    try {
+      const entries = [...walletSeen];
+      for (const batch of chunkRows(entries, INSERT_CHUNK_ROWS)) {
+        const params: unknown[] = [];
+        for (const [address, lastSeen] of batch) params.push(address, lastSeen);
+        await query(
+          `insert into wallets (address, last_seen)
+           values ${valuesPlaceholders(batch.length, 2)}
+           on conflict (address) do update set last_seen = excluded.last_seen`,
+          params,
+        );
+      }
+    } catch {
+      /* the wallet registry is a convenience index; it never gates the cursor */
+    }
   }
 
   const cursorTo = writeFailed ? from - 1n : completeThrough;
@@ -397,42 +500,54 @@ export async function runIndexer({
     const earliestAt = rows.length ? rows.reduce((m, r) => (r.timestamp < m ? r.timestamp : m), rows[0].timestamp) : null;
     const nowIso = new Date().toISOString();
 
-    const { data: prior } = await sb
-      .from("indexer_state")
-      .select("earliest_indexed_block, earliest_indexed_at, continuous_since")
-      .eq("chain_id", robinhoodChain.id)
-      .maybeSingle();
+    /**
+     * "Backwards only" is expressed in the statement itself.
+     *
+     * LEAST(existing, offered) ignores NULLs, so a first write takes the offered
+     * value and every later write can only lower it. Doing it in SQL rather
+     * than as a read, compare, write means two runs overlapping cannot read the
+     * same prior value and have the later one overwrite the earlier one's
+     * older, truer claim.
+     */
+    const continuousSince = earliestAt ?? nowIso;
+    const hasGap = gapBlocks > 0;
 
-    const priorEarliestBlock =
-      prior?.earliest_indexed_block === null || prior?.earliest_indexed_block === undefined
-        ? null
-        : Number(prior.earliest_indexed_block);
-    const priorEarliestAt = (prior?.earliest_indexed_at as string | null) ?? null;
-    const priorContinuous = (prior?.continuous_since as string | null) ?? null;
-
-    // Backwards only. A run over recent blocks must not erase older coverage.
-    const earliestBlock =
-      priorEarliestBlock === null ? Number(from) : Math.min(priorEarliestBlock, Number(from));
-    const earliestIndexedAt =
-      earliestAt && (!priorEarliestAt || earliestAt < priorEarliestAt) ? earliestAt : priorEarliestAt;
-
-    // A gap breaks continuity: what follows it is the new unbroken start.
-    const continuousSince =
-      gapBlocks > 0 ? (earliestAt ?? nowIso) : (priorContinuous ?? earliestAt ?? nowIso);
-
-    await sb.from("indexer_state").upsert(
-      {
-        chain_id: robinhoodChain.id,
-        last_processed_block: Number(cursorTo),
-        last_finalized_block: Number(cursorTo),
-        updated_at: nowIso,
-        earliest_indexed_block: earliestBlock,
-        continuous_since: continuousSince,
-        ...(gapBlocks > 0 ? { gap_blocks: gapBlocks, last_gap_at: nowIso } : {}),
-        ...(earliestIndexedAt ? { earliest_indexed_at: earliestIndexedAt } : {}),
-      },
-      { onConflict: "chain_id" },
-    );
+    try {
+      await sql`
+        insert into indexer_state (
+          chain_id, last_processed_block, last_finalized_block, updated_at,
+          earliest_indexed_block, earliest_indexed_at, continuous_since, gap_blocks, last_gap_at
+        ) values (
+          ${robinhoodChain.id},
+          ${Number(cursorTo)},
+          ${Number(cursorTo)},
+          ${nowIso},
+          ${Number(from)},
+          ${earliestAt},
+          ${continuousSince},
+          ${hasGap ? gapBlocks : 0},
+          ${hasGap ? nowIso : null}
+        )
+        on conflict (chain_id) do update set
+          last_processed_block = excluded.last_processed_block,
+          last_finalized_block = excluded.last_finalized_block,
+          updated_at = excluded.updated_at,
+          earliest_indexed_block = least(indexer_state.earliest_indexed_block, excluded.earliest_indexed_block),
+          earliest_indexed_at = least(indexer_state.earliest_indexed_at, excluded.earliest_indexed_at),
+          continuous_since = case
+            when ${hasGap}::boolean then excluded.continuous_since
+            else coalesce(indexer_state.continuous_since, excluded.continuous_since)
+          end,
+          gap_blocks = case when ${hasGap}::boolean then excluded.gap_blocks else indexer_state.gap_blocks end,
+          last_gap_at = case when ${hasGap}::boolean then excluded.last_gap_at else indexer_state.last_gap_at end
+      `;
+    } catch {
+      /**
+       * A cursor that fails to advance is safe: the same range is read again
+       * next run and the write above is idempotent. Failing the whole run here
+       * would throw away transfers that are already durably stored.
+       */
+    }
   }
 
   const flows = inserted > 0 ? await recomputeAddressFlows() : { windows: 0, addresses: 0, skipped: true };
@@ -466,11 +581,24 @@ export async function runIndexer({
  * between holders without changing supply, so no asset-level net flow exists.
  */
 export async function recomputeAddressFlows() {
-  if (!isSupabaseConfigured() || !supabase) return { windows: 0, addresses: 0, skipped: true };
-  const sb = supabase;
+  const sql = db();
+  if (!isDatabaseConfigured() || !sql) return { windows: 0, addresses: 0, skipped: true };
 
-  const { data: assetRows } = await sb.from("assets").select("id, decimals").limit(200);
-  const decimals = new Map((assetRows ?? []).map((a) => [a.id as string, (a.decimals as number) ?? 18]));
+  /**
+   * A failed read degrades to "nothing to recompute", never to a throw.
+   * This runs after transfers are already durably written and the cursor has
+   * advanced; letting a flow-table hiccup fail the whole run would report an
+   * ingestion that actually succeeded as a failure.
+   */
+  let assetRows: { id: string; decimals: number | string | null }[] = [];
+  try {
+    assetRows = (await sql`
+      select id, decimals from assets limit 200
+    `) as { id: string; decimals: number | string | null }[];
+  } catch {
+    assetRows = [];
+  }
+  const decimals = new Map(assetRows.map((a) => [String(a.id), Number(a.decimals ?? 18)]));
 
   const now = Date.now();
   let written = 0;
@@ -478,12 +606,20 @@ export async function recomputeAddressFlows() {
 
   for (const window of WINDOWS) {
     const since = new Date(now - WINDOW_MS[window]).toISOString();
-    const { data: transfers } = await sb
-      .from("transfers")
-      .select("asset_id, from_address, to_address, amount")
-      .gte("timestamp", since)
-      .limit(5000);
-    if (!transfers) continue;
+    let transfers: { asset_id: string | null; from_address: string; to_address: string; amount: string }[];
+    try {
+      // `timestamp` is quoted because it is also a type name in Postgres.
+      transfers = (await sql`
+        select asset_id, from_address, to_address, amount
+        from transfers
+        where "timestamp" >= ${since}
+        limit 5000
+      `) as { asset_id: string | null; from_address: string; to_address: string; amount: string }[];
+    } catch {
+      // A window that could not be read is skipped, not written with zeros.
+      continue;
+    }
+    if (!transfers.length) continue;
 
     type Acc = { inflow: number; outflow: number; tx: number; cp: Set<string> };
     // keyed by address AND asset — never one bucket for all assets
@@ -499,11 +635,13 @@ export async function recomputeAddressFlows() {
       return e;
     };
 
-    for (const t of transfers as { asset_id: string | null; from_address: string; to_address: string; amount: string }[]) {
+    for (const t of transfers) {
       if (!t.asset_id) continue; // an amount without an asset has no unit
-      const amt = fromBaseUnits(t.amount, decimals.get(t.asset_id) ?? 18);
-      const f = touch(t.from_address, t.asset_id);
-      const to = touch(t.to_address, t.asset_id);
+      const assetId = String(t.asset_id);
+      // numeric arrives as a string; fromBaseUnits reads the base units exactly
+      const amt = fromBaseUnits(String(t.amount), decimals.get(assetId) ?? 18);
+      const f = touch(t.from_address, assetId);
+      const to = touch(t.to_address, assetId);
       f.outflow += amt;
       f.tx += 1;
       f.cp.add(t.to_address);
@@ -535,26 +673,63 @@ export async function recomputeAddressFlows() {
       };
     });
 
-    const { error } = await sb.from("flow_windows").upsert(payload, { onConflict: "entity_type,entity_id,window" });
-    if (!error) {
+    try {
+      for (const batch of chunkRows(payload, INSERT_CHUNK_ROWS)) {
+        const params: unknown[] = [];
+        for (const p of batch) {
+          params.push(
+            p.entity_type,
+            p.entity_id,
+            p.window,
+            p.inflow,
+            p.outflow,
+            p.net_flow,
+            p.transaction_count,
+            p.unique_counterparties,
+            p.calculated_at,
+          );
+        }
+        // `window` is a reserved word in Postgres, so the column is quoted.
+        await query(
+          `insert into flow_windows (
+             entity_type, entity_id, "window", inflow, outflow, net_flow,
+             transaction_count, unique_counterparties, calculated_at
+           ) values ${valuesPlaceholders(batch.length, 9)}
+           on conflict (entity_type, entity_id, "window") do update set
+             inflow = excluded.inflow,
+             outflow = excluded.outflow,
+             net_flow = excluded.net_flow,
+             transaction_count = excluded.transaction_count,
+             unique_counterparties = excluded.unique_counterparties,
+             calculated_at = excluded.calculated_at`,
+          params,
+        );
+      }
       written += payload.length;
       windowsDone += 1;
+    } catch {
+      /* a window that failed to write is simply not counted as written */
     }
   }
 
   // Retire earlier shapes: asset-level rows stored gross volume in net_flow,
   // and address-level rows summed incomparable token units together.
-  await sb.from("flow_windows").delete().in("entity_type", ["asset", "address"]);
+  try {
+    await sql`delete from flow_windows where entity_type in (${"asset"}, ${"address"})`;
+  } catch {
+    /* the legacy sweep is housekeeping; it never fails a recompute */
+  }
 
   return { windows: windowsDone, addresses: written, skipped: false };
 }
 
 export async function getCursor(): Promise<{ last_processed_block: number }> {
-  if (!isSupabaseConfigured() || !supabase) return { last_processed_block: 0 };
-  const { data } = await supabase
-    .from("indexer_state")
-    .select("last_processed_block")
-    .eq("chain_id", robinhoodChain.id)
-    .maybeSingle();
-  return { last_processed_block: Number(data?.last_processed_block ?? 0) };
+  const sql = db();
+  if (!isDatabaseConfigured() || !sql) return { last_processed_block: 0 };
+
+  // bigint arrives as a string from this driver, so the conversion is explicit.
+  const rows = (await sql`
+    select last_processed_block from indexer_state where chain_id = ${robinhoodChain.id} limit 1
+  `) as { last_processed_block: string | number | null }[];
+  return { last_processed_block: Number(rows[0]?.last_processed_block ?? 0) };
 }

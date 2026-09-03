@@ -5,7 +5,7 @@ import { getIndexerStatus, getAssets, getProtocols, getRecentTransfers, countRow
 import { health } from "@/server/market-data/budget";
 import { PROVIDERS } from "@/server/market-data/registry";
 import { activeEndpoint, lastRpcLatencyMs } from "@/server/market-data/providers/rpc";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { databaseHealth } from "@/server/db/client";
 import { blockLabel, integer, relativeTime } from "@/lib/format";
 import { FRESHNESS_BUDGET_MS, type DataState } from "@/lib/data-state";
 import { CHAIN } from "@/config/site";
@@ -28,16 +28,19 @@ type Check = {
 export default async function StatusPage() {
   const now = await requestNow();
 
-  const [indexer, assets, protocols, recent, transferCount] = await Promise.all([
+  const [indexer, assets, protocols, recent, transferCount, database] = await Promise.all([
     getIndexerStatus(),
     getAssets(),
     getProtocols(),
     getRecentTransfers(1),
     countRows("transfers"),
+    // A live round trip to Postgres, made while this page renders. It is the
+    // only way to tell a deployment with no connection string from one whose
+    // database stopped answering, and those are different problems.
+    databaseHealth(),
   ]);
 
   const providers = health(now);
-  const storageConfigured = isSupabaseConfigured() && supabase !== null;
   const cursorAge = indexer.updatedAt ? now - new Date(indexer.updatedAt).getTime() : null;
   const lag = indexer.lagBlocks.value;
 
@@ -53,13 +56,21 @@ export default async function StatusPage() {
     },
     {
       component: "DATABASE",
-      state: !storageConfigured ? "UNAVAILABLE" : assets.state === "UNAVAILABLE" ? "UNAVAILABLE" : "OK",
-      label: !storageConfigured ? "NOT CONFIGURED" : assets.state === "UNAVAILABLE" ? "UNREACHABLE" : "OPERATIONAL",
-      detail: !storageConfigured
-        ? "No storage credentials are present in this deployment, so nothing can be read."
-        : assets.state === "UNAVAILABLE"
-          ? "The registry query failed. Dependent surfaces will read DATA UNAVAILABLE."
-          : `Registry query answered. ${transferCount.value !== null ? `${integer(transferCount.value)} transfers stored.` : "Row count unavailable."}`,
+      state: database.state !== "OK" ? "UNAVAILABLE" : assets.state === "UNAVAILABLE" ? "UNAVAILABLE" : "OK",
+      label:
+        database.state === "NOT_CONFIGURED"
+          ? "NOT CONFIGURED"
+          : database.state === "UNREACHABLE" || assets.state === "UNAVAILABLE"
+            ? "UNREACHABLE"
+            : "OPERATIONAL",
+      detail:
+        database.state === "NOT_CONFIGURED"
+          ? "No DATABASE_URL is set in this deployment, so there is no Postgres to read and every stored figure reads DATA UNAVAILABLE."
+          : database.state === "UNREACHABLE"
+            ? `Postgres is configured but did not answer on this request${database.detail ? ` — ${database.detail}` : ""}. Dependent surfaces will read DATA UNAVAILABLE.`
+            : assets.state === "UNAVAILABLE"
+              ? "Postgres answered, but the registry query failed. Dependent surfaces will read DATA UNAVAILABLE."
+              : `Postgres answered in ${database.latencyMs ?? "?"}ms; the registry query returned. ${transferCount.value !== null ? `${integer(transferCount.value)} transfers stored.` : "Row count unavailable."}`,
     },
     {
       component: "INDEXER",
@@ -161,6 +172,13 @@ export default async function StatusPage() {
               </div>
             ))}
           </div>
+          <Note>
+            DATABASE is a single Postgres database, hosted on Neon and reached over its connection string. Its two
+            failure modes are never collapsed into one: NOT CONFIGURED means this deployment has no DATABASE_URL and
+            has never had anything to read, while UNREACHABLE means the connection string exists and the database did
+            not answer this request. The first is a deployment that was built without secrets; the second is an
+            outage.
+          </Note>
         </DocSection>
 
         <DocSection id="providers" title="Market data providers">

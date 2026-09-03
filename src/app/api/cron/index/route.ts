@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createPublicClient, http } from "viem";
 import { robinhoodChain } from "@/lib/wagmi";
-import { isSupabaseConfigured } from "@/lib/supabase";
+import { isDatabaseConfigured } from "@/server/db/client";
 import { activeEndpoint as activeRpcEndpoint } from "@/server/market-data/providers/rpc";
 import { runIndexer, getCursor } from "@/lib/indexer";
 import { ingestPrices } from "@/server/market-data/scheduler";
@@ -49,11 +49,14 @@ export async function GET(req: Request) {
     }
   }
 
-  if (!isSupabaseConfigured()) {
+  // Ingestion writes; with no database there is nowhere for a pass to land, and
+  // a run that cannot commit is worse than one that never started — it spends
+  // provider quota to produce nothing.
+  if (!isDatabaseConfigured()) {
     return NextResponse.json(
       {
-        error: "SUPABASE_NOT_CONFIGURED",
-        hint: "Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, then apply supabase.sql.",
+        error: "DATABASE_NOT_CONFIGURED",
+        hint: "Set DATABASE_URL to a Postgres connection string, then apply db/migrations/0001_foldmark_schema.sql.",
       },
       { status: 503 },
     );

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Live chain follower.
+ * Live chain follower — the primary writer.
  *
  * This exists because of one measured constraint: the free public RPC retains
  * roughly 48 blocks of logs — about five seconds at this chain's 0.103s block
@@ -15,12 +15,23 @@
  *   node scripts/live-indexer.mjs --once             # one pass, then exit
  *   FOLDMARK_BASE_URL=https://… node scripts/live-indexer.mjs
  *
- * It drives the same /api/cron/index endpoint the scheduled job uses, so there
- * is one ingestion implementation rather than two that can drift apart.
+ * It drives the /api/cron/index endpoint over HTTP, which is where ingestion
+ * actually happens: that route reads the chain, normalises rows and writes them
+ * to Postgres through the server's SQL layer (src/server/db/client.ts). The
+ * daily Vercel cron hits the same route, so there is one ingestion
+ * implementation rather than two that can drift apart — this process is simply
+ * the one that calls it often enough to stay inside the log window, and the
+ * cron is a fallback that keeps the deployment writing something if this
+ * machine is off.
+ *
+ * That HTTP boundary is deliberate: this runner holds no database credential.
+ * DATABASE_URL lives on the deployment, never on the machine running this file,
+ * so a workstation cannot become a second thing with write access to Postgres.
  *
  * Serverless hosting cannot hold a WebSocket open, which is why this runs as a
  * process rather than a route. Anywhere that can keep a small Node process
- * alive will do.
+ * alive will do; scripts/install-live-indexer.ps1 registers it as a Windows
+ * scheduled task.
  */
 
 const WS_URL = process.env.FOLDMARK_WS_URL || "wss://robinhood-rpc.publicnode.com";
@@ -168,6 +179,7 @@ function scheduleReconnect() {
 console.log("FOLDMARK live indexer");
 console.log(`  socket : ${WS_URL}`);
 console.log(`  ingest : ${BASE_URL}/api/cron/index`);
+console.log(`  writes : Postgres, by the deployment above — no database credential is read here`);
 console.log(`  window : ${LOG_WINDOW} blocks retained, indexing every ${LOG_WINDOW - SAFETY_MARGIN}`);
 console.log("");
 

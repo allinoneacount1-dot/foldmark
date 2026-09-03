@@ -213,7 +213,7 @@ export const DEFINITIONS: Definition[] = [
     term: "PRICE",
     kind: "DERIVED",
     input:
-      "DEX spot quotes for the asset's contract, taken independently from GeckoTerminal and DEX Screener, each with the pool reserve behind it.",
+      "DEX spot quotes for the asset's contract, each with the pool reserve behind it. GeckoTerminal is called; DEX Screener is implemented but only called where a deployment sets DEXSCREENER_ENABLED.",
     computation:
       "Sources are ranked by price type, then by confidence — derived from pool depth and observation age — and the highest ranked observation is displayed. Prices are never averaged.",
     caveat:
@@ -227,7 +227,7 @@ export const DEFINITIONS: Definition[] = [
     computation:
       "The spread between the highest and lowest is reported when it exceeds the tolerance for the shallower venue: 8% below $10k of reserve, 4% below $100k, 2% below $1M, 1% above.",
     caveat:
-      "A spread is an observation about venues, not an arbitrage claim. Execution, slippage and depth at size are not modelled.",
+      "A spread is an observation about venues, not an arbitrage claim. Execution, slippage and depth at size are not modelled. With one price source enabled there is nothing to compare, so no divergence is reported — that silence is a missing second source, not two venues agreeing.",
   },
   {
     id: "log-window",
@@ -250,12 +250,17 @@ export const KIND_LABEL: Record<Definition["kind"], string> = {
 
 /* --------------------------------------------------------------- sources */
 
+/**
+ * LIVE      wired and called by this deployment
+ * DISABLED  implemented, and deliberately not called here — the reason is in `fallback`
+ * PLANNED   not wired. Never presented as a source of any number on screen.
+ */
 export type Source = {
   name: string;
   purpose: string;
   dataType: string;
   freshness: string;
-  status: "LIVE" | "PLANNED";
+  status: "LIVE" | "DISABLED" | "PLANNED";
   fallback: string;
 };
 
@@ -287,20 +292,22 @@ export const SOURCES: Source[] = [
   },
   {
     name: "DEX Screener",
-    purpose: "Second independent DEX quote, used to cross-check GeckoTerminal.",
+    purpose: "Would be a second independent DEX quote, cross-checking GeckoTerminal.",
     dataType: "Public REST API",
     freshness: "Their own responses carry max-age=60, so the cache matches it. Polling faster buys nothing.",
-    status: "LIVE",
+    status: "DISABLED",
     fallback:
-      "Switchable off without losing a capability. Their terms restrict competing products and redistribution, so it is a cross-check, never a load-bearing dependency.",
+      "Implemented and probed as supporting this chain, and still not called unless DEXSCREENER_ENABLED is set: their terms restrict redistribution and products that compete with their screener, and that review is not finished. It is a cross-check, never a load-bearing dependency, so the product loses no capability while it is off — divergence simply cannot be reported from a single source.",
   },
   {
-    name: "FOLDMARK index (Postgres)",
-    purpose: "Normalised transfers, assets, wallets, price observations, flow windows and the indexer cursor.",
-    dataType: "Relational storage",
+    name: "FOLDMARK index — Neon Postgres",
+    purpose:
+      "Normalised transfers, assets, wallets, price observations, canonical prices, flow windows and the indexer cursor. Written by the persistent runner through the deployment's ingest route; read by every page and every API route.",
+    dataType: "Postgres, reached with parameterised SQL through one server-side client. No ORM, and no client-side access.",
     freshness: "Advances with the indexer cursor; the lag is published on every page.",
     status: "LIVE",
-    fallback: "If storage is unreachable every dependent figure reads DATA UNAVAILABLE.",
+    fallback:
+      "If the database is unreachable, or DATABASE_URL is unset, every dependent figure reads DATA UNAVAILABLE. Nothing cached or approximate is served in its place.",
   },
   {
     name: "Blockscout explorer",
@@ -396,9 +403,25 @@ export const ROADMAP: RoadmapItem[] = [
   { title: "Market topology", detail: "Deterministic source → asset → destination graph from observed transfers.", status: "LIVE" },
   { title: "Per-address net flow", detail: "Directional flow precomputed per address across all five windows.", status: "LIVE" },
   { title: "Machine-readable context API", detail: "Every measurement available as JSON with states and provenance.", status: "LIVE" },
-  { title: "DEX price ingestion", detail: "Prices observed from two independent free sources, reconciled by depth and age, and persisted on every ingestion pass.", status: "LIVE" },
+  {
+    title: "Postgres storage with a parameterised SQL layer",
+    detail:
+      "Neon Postgres reached through one server-side client, with the schema in db/migrations applied by npm run db:migrate. No ORM, no vendor SDK, and no database access from the browser.",
+    status: "LIVE",
+  },
+  {
+    title: "DEX price ingestion",
+    detail:
+      "Prices observed from free public DEX sources — GeckoTerminal here, DEX Screener where a deployment enables it — reconciled by depth and age rather than averaged, and persisted with full provenance on every ingestion pass.",
+    status: "LIVE",
+  },
   { title: "Provider budget and circuit breaking", detail: "Every outbound call is budgeted, cached and coalesced; a failing provider is stood down rather than hammered.", status: "LIVE" },
-  { title: "Live chain follower", detail: "A WebSocket follower that indexes blocks while their logs are still inside the free endpoint’s window.", status: "LIVE" },
+  {
+    title: "Live chain follower",
+    detail:
+      "A persistent WebSocket follower — the pipeline’s primary writer — that indexes blocks while their logs are still inside the free endpoint’s window. Installable as a Windows scheduled task that restarts itself and writes a heartbeat.",
+    status: "LIVE",
+  },
   { title: "Issuer reference and oracle prices", detail: "Wire the Robinhood Stock Token API and a verified Chainlink aggregator so the two highest-authority price types enter the ranking.", status: "PLANNED" },
   { title: "Archive backfill", detail: "Recover log history older than the free endpoint’s window, which needs an archive node.", status: "PLANNED" },
   { title: "Protocol contract registry", detail: "Address-to-protocol mapping, which unlocks flow classification and protocol exposure.", status: "PLANNED" },
@@ -448,7 +471,12 @@ export const LIMITATIONS: { title: string; detail: string }[] = [
   {
     title: "Continuous ingestion needs a process, not a cron",
     detail:
-      "Because of the log window, chain indexing must follow the head over a WebSocket. Serverless hosting cannot hold that connection open, so scripts/live-indexer.mjs runs as a small process. Price ingestion has no such constraint and runs on the scheduled route.",
+      "Because of the log window, chain indexing must follow the head over a WebSocket. Serverless hosting cannot hold that connection open, so scripts/live-indexer.mjs runs as a persistent process and is the pipeline's primary writer; the daily Vercel cron calls the same ingest route and is a fallback, not a substitute. Price ingestion has no such constraint and does run on the scheduled route.",
+  },
+  {
+    title: "The primary writer is one machine",
+    detail:
+      "Chain coverage advances while that runner is up and stops while it is not — a reboot, a lost network or a stopped scheduled task becomes a gap that no later pass can recover, because the logs have left the free endpoint's window. Those gaps are counted in indexer_state and reported as PARTIAL coverage rather than closed over, so a window can be honest about being shorter than its label.",
   },
   {
     title: "No flow classification",
@@ -465,7 +493,8 @@ export const LIMITATIONS: { title: string; detail: string }[] = [
   },
   {
     title: "Row caps produce lower bounds",
-    detail: "Aggregation runs over a bounded row window because the storage client cannot express GROUP BY. When a query reaches its cap the result is reported as PARTIAL and every count is a lower bound.",
+    detail:
+      "Aggregation runs over a bounded row window rather than an unbounded scan, so a busy window can reach the cap. When it does, the result is reported as PARTIAL and every count inside it is a lower bound rather than a total.",
   },
   {
     title: "Indexer lag",

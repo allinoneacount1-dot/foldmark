@@ -29,16 +29,24 @@ const MODULES: Module[] = [
   {
     id: "storage",
     name: "Storage",
-    file: "supabase.sql",
-    does: "Postgres holding indexer_state, assets, transfers, wallets, flow_windows, protocols, contracts, prices and relationships.",
+    file: "db/migrations/0001_foldmark_schema.sql",
+    does: "Neon Postgres holding indexer_state, assets, transfers, wallets, contracts, protocols, flow_windows, price_observations, canonical_prices, market_state and provider_refresh_state.",
     guarantees:
-      "Unique constraints on (tx_hash, log_index) and on (entity_type, entity_id, window) make writes safe to repeat. The schema is idempotent and can be re-applied.",
+      "Every table carries the key that makes a write safe to repeat: transfers on (tx_hash, log_index), flow_windows on (entity_type, entity_id, window), price_observations on (asset_id, source, price_type, fetched_at, pair_key). The file is idempotent — every object is declared if not exists — so it can be applied to an existing database without dropping anything.",
+  },
+  {
+    id: "db-client",
+    name: "Database client",
+    file: "src/server/db/client.ts",
+    does: "The only path to Postgres. A tagged-template SQL client whose interpolated values always become bound parameters, one small pooled connection shared by Vercel and the runner, and a health probe that tells NOT_CONFIGURED apart from UNREACHABLE.",
+    guarantees:
+      "Values interpolated into a tagged template are sent as bound parameters, so there is no code path that builds SQL by concatenating a caller's value. The connection string is read from DATABASE_URL only — never from a NEXT_PUBLIC_ variable — so it cannot reach a browser bundle. With no DATABASE_URL every caller receives null and the surface renders UNAVAILABLE instead of throwing, which is how a fresh clone builds with no secrets.",
   },
   {
     id: "read-layer",
     name: "Read layer",
     file: "src/lib/queries.ts",
-    does: "Every query the product makes. Folds bounded row windows in memory into per-asset, per-address and per-window aggregates.",
+    does: "Every query the product makes, written as SQL against the schema above. Folds bounded row windows into per-asset, per-address and per-window aggregates.",
     guarantees:
       "Returns a state alongside every result. A query that reaches its row cap is reported PARTIAL rather than presented as complete.",
   },
@@ -116,33 +124,46 @@ export default function ArchitecturePage() {
    │
    │  wss newHeads ─────────────┐        https eth_getLogs · eth_getBlockByNumber · eth_call
    ▼                            │
-LIVE FOLLOWER                   │        RPC FAILOVER CLIENT
+WINDOWS PERSISTENT RUNNER       │        RPC FAILOVER CLIENT
 scripts/live-indexer.mjs        │        ordered endpoints, last-good preferred
    │  follows the head because  │
    │  the free node retains     │
    │  only ~48 blocks of logs   │
    └────────────┬───────────────┘
-                ▼
-         INDEXER  ·  block-time resolved  ·  gaps recorded, never skipped
+                │  POST /api/cron/index  ◀── the daily VERCEL CRON calls this
+                ▼                            same route. A fallback so a
+         INGESTION                           deployment with no runner still
+         chain logs + provider prices        writes something; one pass a day
+         block time resolved                 cannot hold a five-second log
+         gaps recorded, never skipped        window, so it replaces nothing
                 │
                 ▼
-         POSTGRES   assets · transfers · wallets · prices · flow_windows
+         NEON POSTGRES   assets · transfers · wallets · flow_windows
+                │        price_observations · canonical_prices · indexer_state
                 │
-                ├──▶ FLOW ENGINE           inflow / outflow / net per address
+                │  one entry point: src/server/db/client.ts — parameterised SQL,
+                │  server-side only, no ORM and no client-side database access
+                │
+                ├──▶ FLOW ENGINE           inflow / outflow / net per address, per asset
                 ├──▶ RELATIONSHIP ENGINE   directed edges → market topology
                 └──▶ CANDLE ENGINE         OHLC from stored observations
 
 MARKET DATA LAYER  ·  server-side only  ·  budget + cache + coalescing
-   │
+   │   called during ingestion; every observation is stored with its provenance
    ├── GeckoTerminal   DEX spot + OHLCV backfill   10 req/min budget
-   ├── DEX Screener    second DEX quote            60s cache, matches theirs
+   ├── DEX Screener    second DEX quote            off unless DEXSCREENER_ENABLED
    └── (reconcile)     ranked by type, then depth and age — never averaged
                 │
                 ▼
          MarketSnapshot   canonical price + every observation + divergence
                 │
-                ├──▶ WEB UI   context, visually
-                └──▶ API      context, structurally  ──▶  AGENTS`}
+                └──▶ price_observations · canonical_prices, above
+
+VERCEL  ·  Next.js server components + the FOLDMARK API
+   │   reads Postgres through the read layer — the browser reaches neither the
+   │   database nor the RPC, and holds no secret
+   ├──▶ USERS    context, visually
+   └──▶ AGENTS   context, structurally`}
             </pre>
           </div>
           <Note>
@@ -174,27 +195,33 @@ MARKET DATA LAYER  ·  server-side only  ·  budget + cache + coalescing
         <DocSection id="idempotency" title="Why a replay is safe">
           <P>
             The indexer can be run again over a range it has already processed without corrupting anything. That
-            property is what makes a cron-driven pipeline trustworthy.
+            property is what makes a restartable pipeline trustworthy — and it is load-bearing here, because the
+            runner reconnects after every dropped socket and the daily cron may cover a range the runner already took.
           </P>
           <CodeBlock
-            language="ts"
-            caption="src/lib/indexer.ts — idempotent write"
-            code={`await sb
-  .from("transfers")
-  .upsert(rows, { onConflict: "tx_hash,log_index", ignoreDuplicates: true, count: "exact" });
+            language="text"
+            caption="SQL — the idempotent write, src/lib/indexer.ts"
+            code={`-- Every value is bound, never spliced into the statement text.
+insert into transfers
+  (tx_hash, log_index, block_number, chain_id, asset_id,
+   from_address, to_address, amount, timestamp)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+on conflict (tx_hash, log_index) do nothing;
 
-// The cursor advances only after the write, so a crash mid-run replays the
-// same range rather than skipping it.
-await sb.from("indexer_state").upsert(
-  { chain_id: ${CHAIN.id}, last_processed_block: Number(toBlock), updated_at: new Date().toISOString() },
-  { onConflict: "chain_id" },
-);`}
+-- The cursor advances only after the write, so a crash mid-run replays the
+-- same range rather than skipping it.
+insert into indexer_state (chain_id, last_processed_block, updated_at)
+values ($1, $2, now())
+on conflict (chain_id) do update
+   set last_processed_block = excluded.last_processed_block,
+       updated_at           = excluded.updated_at;`}
           />
           <List
             items={[
               "A transfer is keyed by (tx_hash, log_index) — the only pair that is unique for an ERC-20 log.",
               "Flow windows are keyed by (entity_type, entity_id, window), so a recompute replaces rather than accumulates.",
-              "Assets are keyed by contract address, so rediscovery is a no-op.",
+              "Assets are keyed by (chain_id, contract_address), so rediscovery is a no-op. Never by symbol: anyone can deploy a second contract calling itself NVDA.",
+              "A price observation is keyed by (asset_id, source, price_type, fetched_at, pair_key), and pair_key is NOT NULL. A nullable pair address made every pairless observation distinct to Postgres, which is a unique index that permits unlimited duplicates.",
               "The cursor advances last. A failure leaves the range to be re-read, never silently skipped.",
             ]}
           />
@@ -268,10 +295,14 @@ await sb.from("indexer_state").upsert(
           <List
             items={[
               "Next.js App Router on Vercel. Pages revalidate on a short interval; API routes are dynamic.",
-              "Postgres via Supabase, reached only through the read layer with a service-role key held server-side.",
-              "One scheduled invocation of /api/cron/index advances the indexer. A shared secret gates it when CRON_SECRET is set.",
-              "scripts/local_indexer.mjs drives the same endpoint on a tighter local cadence — there is one indexer implementation, not two.",
+              "Neon Postgres, reached only through src/server/db/client.ts. DATABASE_URL is server-side and there is no ORM — the read layer is SQL written against the schema in db/migrations.",
+              "The schema is applied with npm run db:migrate, and npm run db:status reports what is applied without changing anything. Migrations are plain SQL files, applied in filename order, each inside its own transaction and recorded in a ledger so a re-run is a no-op.",
+              "The persistent runner is the primary writer. scripts/live-indexer.mjs follows the chain head over WebSocket and drives /api/cron/index; scripts/install-live-indexer.ps1 registers it as a Windows scheduled task that restarts itself, rotates its log and writes a heartbeat.",
+              "One scheduled Vercel invocation of /api/cron/index a day is the fallback, not the pipeline: a daily pass cannot hold a five-second log window, so with the runner stopped the chain index is gapped and says so. A shared secret gates the route when CRON_SECRET is set.",
+              "The runner holds no database credential. It calls the deployment over HTTP and the deployment does the writing, so a workstation never becomes a second thing with write access to Postgres.",
+              "scripts/local_indexer.mjs drives the same endpoint on a tighter local cadence — there is one ingestion implementation, not two.",
               "No client-side secret exists: the browser never talks to storage or to the RPC directly.",
+              "With no DATABASE_URL the application still builds and runs — every dependent surface renders UNAVAILABLE rather than throwing. That is what lets CI build a fresh clone with no secrets at all.",
             ]}
           />
         </DocSection>
