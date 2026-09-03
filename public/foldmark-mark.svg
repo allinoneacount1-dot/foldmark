@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="Foldmark">
-  <!-- F outline — paper -->
-  <path d="M7 6.5 H22 V10 H11 V14.2 H19.5 V17.7 H11 V25.5 H7 V6.5 Z" stroke="#F2F0E8" stroke-width="1.35" fill="none" stroke-linejoin="round" stroke-linecap="square"/>
-  <!-- signal bars — C7FF4A, 60fps pulse via CSS if needed -->
-  <rect x="12.2" y="18.2" width="1.9" height="5.1" rx="0.3" fill="#C7FF4A"/>
-  <rect x="15.0" y="15.8" width="1.9" height="7.5" rx="0.3" fill="#C7FF4A"/>
-  <rect x="17.8" y="13.1" width="1.9" height="10.2" rx="0.3" fill="#C7FF4A"/>
-  <rect x="20.6" y="16.6" width="1.9" height="6.7" rx="0.3" fill="#C7FF4A" opacity="0.92"/>
-</svg>

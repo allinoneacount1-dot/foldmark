@@ -1,0 +1,57 @@
+name: CI
+
+# Runs on every push to a branch and on every pull request. A pull request that
+# has not been through this has not been checked, whatever it looks like.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A new push supersedes the run in progress for the same ref. There is no value
+# in finishing a check on a commit nobody will merge.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: lint · typecheck · test · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # No secrets are provided to this job on purpose.
+    #
+    # The build must succeed without a Supabase key or a provider key, because
+    # that is exactly the condition a fresh clone and a preview deployment start
+    # from. Every data path already reports UNAVAILABLE rather than throwing when
+    # storage is not configured, and this job is what keeps that true. It also
+    # means a fork's pull request runs the full suite with nothing to leak.
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` rather than `npm install`: the lockfile is the input, and a run
+      # that quietly resolved different versions would not be testing the commit.
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The suite covers the rules that decide whether a number is true:
+      # unit safety, cache provenance, index coverage, provider parsing.
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
