@@ -28,8 +28,14 @@ import { CHAIN } from "@/config/site";
  * Overridden by OPENROUTER_MODEL in the deployment environment; this constant
  * is the fallback so a missing variable cannot silently disable the layer. No
  * other file names a model.
+ *
+ * Chosen by measurement rather than preference. Two earlier free models were
+ * unusable: one was persistently rate-limited upstream, the other returned
+ * nothing within 150 seconds. Of the remaining candidates this one answered in
+ * about two seconds with real content, where a sibling returned an empty
+ * message. It is a free variant, so the reasoning layer costs nothing to run.
  */
-export const DEFAULT_MODEL = "nvidia/nemotron-3.5-lightning:free";
+export const DEFAULT_MODEL = "poolside/laguna-s-2.1:free";
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 
 export type ReasoningConfig = {

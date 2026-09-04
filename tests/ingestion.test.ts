@@ -231,13 +231,13 @@ describe("the transport decodes only what it can justify", () => {
 /* ========================================================================== */
 
 describe("the reasoning model is configured in exactly one place", () => {
-  it("defaults to the free Nemotron model", () => {
-    expect(DEFAULT_MODEL).toBe("nvidia/nemotron-3.5-lightning:free");
+  it("defaults to the model that was measured to work", () => {
+    expect(DEFAULT_MODEL).toBe("poolside/laguna-s-2.1:free");
   });
 
-  it("is always a free variant by default", () => {
-    // A paid model must never be reachable without someone choosing it in the
-    // deployment environment.
+  it("keeps the default on a free variant", () => {
+    // The reasoning layer must not start costing money because a default
+    // changed. A paid model is reachable only by setting OPENROUTER_MODEL.
     expect(DEFAULT_MODEL.endsWith(":free")).toBe(true);
   });
 
@@ -269,7 +269,7 @@ describe("the reasoning model is configured in exactly one place", () => {
     let mentions = 0;
     for (const file of files) {
       const source = readFileSync(file, "utf8");
-      if (source.includes("nvidia/nemotron")) mentions += 1;
+      if (source.includes("poolside/laguna")) mentions += 1;
       // The model this replaced must be gone entirely.
       expect(source).not.toContain("z-ai/glm");
     }

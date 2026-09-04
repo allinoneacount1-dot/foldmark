@@ -1,191 +1,249 @@
 # FOLDMARK
 
-Market intelligence layer for **Robinhood Chain** (chain id `4663`).
+**Market Intelligence Layer for Robinhood Chain**
 
-FOLDMARK reads the chain, stores what it observed, and renders that — assets,
-wallets, transfers, counterparties, capital flows and DEX prices — as one market
-map for people and one JSON surface for agents.
+> Markets have structure. FOLDMARK makes it visible.
 
-## The rule everything else follows
+FOLDMARK turns raw Robinhood Chain activity into readable financial structure.
 
-A number reaches the screen only when it was measured. Nothing is estimated,
-interpolated, averaged across venues, or carried forward. Where a value is
-unknown the product renders an explicit state instead of a figure:
+An asset is more than a ticker or a price.
 
-| State | Meaning |
+Behind it are:
+
+- addresses
+- counterparties
+- markets
+- liquidity
+- protocols
+- capital flows
+- relationships
+
+FOLDMARK connects those relationships into a readable market map.
+
+## What is FOLDMARK?
+
+FOLDMARK is an onchain market intelligence system built for Robinhood Chain.
+
+It observes market activity, normalizes blockchain observations, and transforms
+those observations into structured relationships that humans and machines can
+interpret.
+
+Traditional products answer different questions:
+
+| Product | Question |
 | --- | --- |
-| `OK` | Measured, complete, fresh. |
-| `PARTIAL` | Measured, but the window is shorter than its label or the query reached its row cap. Every count inside it is a lower bound. |
-| `STALE` | Measured, but older than the fifteen-minute freshness budget. |
-| `EMPTY` | Measured, and there was nothing there. |
-| `INDEXING` | Not measured yet. |
-| `UNAVAILABLE` | Not measurable in this deployment. |
+| Explorer | What happened? |
+| Chart | What did price do? |
+| Portfolio | What do I own? |
+| DEX | What can I trade? |
+| **FOLDMARK** | **How is the market structured, and where is capital moving?** |
 
-The reasoning behind this is in [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md).
+FOLDMARK is not intended to replace an explorer, exchange, wallet, portfolio
+tracker or charting platform. It is the market context layer around them.
+
+## Product
+
+### Fabric
+
+FOLDMARK's market topology surface.
+
+Fabric maps observed assets, addresses, venues, protocols and directed
+relationships into a readable graph. Node shape carries class, position encodes
+role — assets inner, venues and protocols around them, addresses on the rim —
+and an arrowhead states which way value moved.
+
+Measured Fabric is built from real observations. Architecture Preview is a
+separate mode drawn from generic category placeholders; it is labelled as such
+and is never presented as observed market activity.
+
+### Flows
+
+A structured view of how value moves between observed entities and
+counterparties.
+
+Supported relationships are classified into semantic flow classes:
+
+`DEX_BUY` · `DEX_SELL` · `LP_DEPOSIT` · `LP_WITHDRAW` · `LEND` · `BORROW` ·
+`REPAY` · `BRIDGE_IN` · `BRIDGE_OUT` · `WALLET_TRANSFER` · `UNCLASSIFIED`
+
+Direction decides meaning: the same pool and the same address are a buy or a
+sell depending only on which way value went. Unknown relationships remain
+`UNCLASSIFIED` until sufficient evidence exists.
+
+`LP_DEPOSIT`, `LP_WITHDRAW` and `LEND` are reserved names in the vocabulary that
+the current classifier does not yet assign.
+
+### Asset Passports
+
+A contextual intelligence surface for individual assets.
+
+Depending on available evidence and coverage, an Asset Passport can expose
+canonical contract identity, activity, counterparties, market and flow
+relationships, price provenance, liquidity, protocol exposure, coverage,
+freshness and source information.
+
+### Protocols
+
+A verification-aware contract and protocol intelligence surface.
+
+Protocol identity is not inferred from ticker, name or behaviour alone.
+
+### FOLDMARK Intelligence
+
+A conversational product intelligence layer.
+
+It combines deterministic canonical product knowledge, current page context,
+application state, and optional external language-model reasoning. Canonical
+FOLDMARK semantics remain controlled by the deterministic knowledge layer: the
+meaning of a term is fixed text, not generated, and cannot vary between two
+readings of it.
+
+## Data Principles
+
+FOLDMARK is built around explicit data truth.
+
+- Observed ≠ Identified
+- Identified ≠ Categorized
+- Categorized ≠ Verified
+- Reference price ≠ Onchain price
+- Reference price ≠ Oracle price
+- Reference price ≠ DEX spot price
+- Unknown ≠ Wallet
+- Unknown ≠ Protocol
+- Unknown ≠ DEX
+- `UNCLASSIFIED` is a valid state
+- Token transfer ≠ Economic inflow
+- Non-comparable token units are never silently combined as capital
+- Missing measurements are never replaced with synthetic financial data
+- Architecture Preview ≠ Measured observation
+- Market recognition ≠ Authoritative verification
+
+FOLDMARK prefers **unknown over incorrect**.
+
+A transfer carries the timestamp of its block, never the moment ingestion ran.
+A price is aligned to the time of the transfer it values, with no look-ahead.
 
 ## Architecture
 
-```
-ROBINHOOD CHAIN  ·  RPC over HTTPS + newHeads over WebSocket
-        │
-        ▼
-WINDOWS PERSISTENT RUNNER              scripts/live-indexer.mjs
-  follows the head, drives ingestion    the primary writer
-        │
-        │  POST /api/cron/index         ← the daily Vercel cron calls the same
-        ▼                                 route, as a fallback
-NEON POSTGRES                          db/migrations/0001_foldmark_schema.sql
-  assets · transfers · wallets · flow_windows · price_observations ·
-  canonical_prices · indexer_state
-        │
-        │  src/server/db/client.ts — parameterised SQL, server-side only
-        ▼
-VERCEL                                 Next.js App Router + the FOLDMARK API
-        │
-        ├──▶ USERS    context, visually
-        └──▶ AGENTS   context, structurally
+```text
+Robinhood Chain
+      ↓
+Persistent ingestion
+      ↓
+Normalized observations
+      ↓
+PostgreSQL / Supabase
+      ↓
+Flow + relationship engines
+      ↓
+FOLDMARK API
+      ↓
+Fabric / Flows / Assets / Protocols / Intelligence
 ```
 
-**Why a persistent runner rather than a cron.** The free public RPC serves
-`eth_getLogs` for roughly the last 48–52 blocks and refuses older ranges as
-archive requests. At about 0.101s per block that is some five seconds of history
-against roughly 852,000 blocks a day, so a scheduled job does not fall behind
-and catch up — it misses everything in between, permanently. Ingestion therefore
-follows the chain head over a WebSocket, which serverless hosting cannot hold
-open. The runner is the pipeline; the once-a-day Vercel cron keeps prices and
-asset discovery moving when no runner is up, and cannot keep chain coverage
-continuous. Gaps are counted in `indexer_state` and reported, never closed over.
+Where applicable, observations retain source, chain, block, transaction,
+timestamp, provenance, freshness and coverage.
 
-**Why the runner talks HTTP.** It drives the same ingest route the cron does, so
-there is one ingestion implementation rather than two that drift apart. It holds
-no database credential: `DATABASE_URL` lives on the deployment, so a workstation
-never becomes a second thing with write access to Postgres.
+The product preserves traceability from visible market structure back to the
+underlying observations: an edge on the canvas resolves to an aggregate, which
+resolves to stored transfers, which resolve to a transaction hash and block on
+chain.
 
-**Why plain SQL.** One entry point — `src/server/db/client.ts` — with no ORM and
-no vendor SDK. Values interpolated into its tagged template are sent as bound
-parameters, so no code path can build a statement by concatenating a caller's
-value. With no `DATABASE_URL` every caller receives `null` and the surface
-renders `UNAVAILABLE` rather than throwing, which is how CI builds a fresh clone
-with no secrets at all.
+## Robinhood Chain
 
-## Getting started
+FOLDMARK currently targets Robinhood Chain mainnet.
 
-Requires Node 20+ and a Postgres 15+ database. Neon's free tier is what this is
-built against; nothing here is Neon-specific.
+Chain ID: `4663`
+
+For onchain assets, canonical identity is:
+
+```text
+CHAIN + CONTRACT ADDRESS
+```
+
+Ticker and token name alone are not authoritative identifiers.
+
+## Technology
+
+- **Next.js 16** and **React 19**, App Router
+- **TypeScript**, strict
+- **Tailwind CSS v4**
+- **Vercel** — application host and server runtime
+- **PostgreSQL / Supabase** — persistent observation store, read over SQL where a
+  direct connection is available and over PostgREST otherwise
+- **Robinhood Chain RPC** — block, log and contract reads
+- **viem / wagmi** — chain types and client
+- **TradingView** — reference-market charts, kept strictly separate from onchain
+  price
+- **OpenRouter** — optional reasoning layer behind the deterministic knowledge base
+- **Vitest** — test suite
+- **GitHub Actions** — hosted ingestion scheduler
+
+## Status
+
+FOLDMARK is under active development.
+
+Live in production:
+
+- measured market topology built from indexed transfers
+- capital-flow classification
+- asset intelligence surfaces
+- provenance-aware observations and data states
+- hosted ingestion running on a fixed schedule, independent of any local machine
+- FOLDMARK Intelligence
+
+Partial or not yet implemented:
+
+- **Coverage is partial by design.** Chain 4663 produces roughly 9.7 blocks per
+  second, and the RPC caps a log query at ten blocks. Ingestion therefore follows
+  the head within a bounded budget rather than claiming continuous history, and
+  coverage is reported as `PARTIAL` wherever that is the case.
+- **Nothing is `VERIFIED`.** Verification requires an authoritative issuer source
+  confirming an exact contract on an exact chain. No such source is wired, so no
+  asset carries the badge.
+- **The contracts registry is empty**, so every observed counterparty is
+  unidentified and flows classify as `UNCLASSIFIED`. That is the correct output
+  of the rules, not a gap being hidden.
+- Price, liquidity, holder and protocol-exposure enrichment are not yet populated.
+
+FOLDMARK does not generate fake financial data to fill unavailable measurements.
+
+## Development
 
 ```bash
 npm install
-cp .env.example .env.local     # paste your pooled connection string into DATABASE_URL
-npm run db:migrate             # apply db/migrations in filename order
-npm run dev                    # http://localhost:3000
+npm run dev
 ```
 
-Full database walkthrough: [`docs/NEON-SETUP.md`](docs/NEON-SETUP.md).
-
-The app also runs without `DATABASE_URL`. It simply has nothing to show, and
-says so on every surface rather than inventing something.
-
-## Ingestion
+Quality gates:
 
 ```bash
-npm run live                   # follow the head — the primary writer
-npm run live -- --once         # one ingest pass, then exit
-npm run index                  # local poller against the same route
-npm run probe:providers        # what the market providers actually answer
+npm run lint
+npm run typecheck
+npm test
+npm run build
 ```
 
-To keep it running unattended on Windows:
+## Configuration
 
-```powershell
-.\scripts\install-live-indexer.ps1 -BaseUrl https://your-deployment.vercel.app
-```
+Environment variable **names** only. Values belong in the deployment
+environment, never in the repository. See `.env.example`.
 
-That registers a scheduled task which starts at boot, restarts itself, rotates a
-log and writes a heartbeat under `%LOCALAPPDATA%\foldmark\logs`. Remove it with
-`-Uninstall`.
-
-If the ingest route is gated by `CRON_SECRET`, set it in the user environment —
-never as a command-line argument, which would put it in shell history and in the
-scheduled-task definition:
-
-```powershell
-[Environment]::SetEnvironmentVariable("CRON_SECRET", "<value>", "User")
-```
-
-## Scripts
-
-| Command | What it does |
+| Variable | Purpose |
 | --- | --- |
-| `npm run dev` / `build` / `start` | Next.js development, production build, production server. |
-| `npm run db:migrate` | Apply every migration not yet recorded. Each file runs inside its own transaction. |
-| `npm run db:status` | Report what is applied. Changes nothing. |
-| `npm run live` | Follow the chain head and drive ingestion. |
-| `npm run index` / `index:once` | Poll the ingest route locally. |
-| `npm run probe:providers` | Probe the market data providers and print what they return. |
-| `npm test` | Vitest. Touches no network and no database. |
-| `npm run typecheck` / `lint` | `tsc --noEmit`, ESLint. |
+| `DATABASE_URL` | Direct Postgres connection. Preferred when reachable. |
+| `SUPABASE_URL` | Observation store over PostgREST, used when SQL is unavailable. |
+| `SUPABASE_SERVICE_ROLE_JWT` | Service credential for that path. Server-only. |
+| `ROBINHOOD_RPC_URL` | Chain RPC endpoint for logs, blocks and contract reads. |
+| `NEXT_PUBLIC_ROBINHOOD_RPC` | Public fallback RPC for chain health display. |
+| `INGEST_SECRET` | Shared secret authorising the hosted ingestion endpoint. |
+| `OPENROUTER_API_KEY` | Optional. Enables the reasoning layer. |
+| `OPENROUTER_MODEL` | Optional. Overrides the default model. |
+| `OPENROUTER_BASE_URL` | Optional. Overrides the provider base URL. |
 
-## Environment
+No credential is ever exposed through a `NEXT_PUBLIC_` variable or sent to the
+browser. The application talks to its own API; the API holds the credentials.
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `DATABASE_URL` | for any data | Pooled Postgres connection string. Server-only; never under a `NEXT_PUBLIC_` name. |
-| `NEXT_PUBLIC_ROBINHOOD_RPC` | no | Chain RPC endpoint. Defaults to the public node. |
-| `FOLDMARK_RPC_URLS` | no | Comma-separated failover list for server-side chain reads. |
-| `FOLDMARK_WS_URL` | no | WebSocket endpoint the runner subscribes to. |
-| `FOLDMARK_BASE_URL` | no | Deployment the runner drives. Defaults to `http://localhost:3000`. |
-| `CRON_SECRET` | no | When set, the ingest route requires `Authorization: Bearer <it>`. |
-| `DEXSCREENER_ENABLED` | no | Opt in to the second DEX quote. Off by default. |
+## License
 
-`.env.example` is the annotated template. `.env*` is gitignored.
-
-## Layout
-
-```
-db/migrations/           the schema, one idempotent SQL file per migration
-scripts/                 migrate, live indexer, Windows installer, provider probe
-src/app/                 routes: pages, /api/v1/**, /api/cron/index, /docs/**
-src/components/          design primitives, docs shell, charts, topology canvas
-src/lib/                 indexer, read layer, formatting, OHLC, graph folding
-src/server/db/           the only path to Postgres
-src/server/market-data/  provider registry, budget, cache, reconciliation
-src/content/docs.ts      definitions, sources, roadmap, limitations — written once
-tests/                   unit safety, provenance, coverage, provider parsing
-```
-
-## What this does not do
-
-Measured limits, not a roadmap dressed up as features. The full list is at
-`/docs/limitations` in the running app.
-
-- **No history beyond the log window.** The free endpoint refuses ranges older
-  than roughly 48–52 blocks; backfill needs an archive node. The index is a
-  rolling window rather than the chain from genesis, so holder counts and
-  lifetime figures are not derivable and long windows may report `PARTIAL`.
-- **No issuer reference price and no oracle.** The Robinhood Stock Token API did
-  not answer from this deployment, and no Chainlink aggregator is verified for
-  chain 4663. What is shown is a DEX spot price, labelled as one.
-- **No stock token is `VERIFIED`.** Metadata that looks like a Robinhood Stock
-  Token makes a contract a `CANDIDATE`. Promotion requires an authoritative
-  source confirming that exact contract address, and none is wired.
-- **DEX Screener is off.** Implemented, probed as supporting this chain, and not
-  called unless a deployment sets `DEXSCREENER_ENABLED` — their terms restrict
-  redistribution and competing products, and that review is not finished. With
-  one price source there is nothing to cross-check, so no divergence is
-  reported.
-- **No flow classification, no protocol coverage.** The contracts and protocols
-  registries are empty, so every flow is `UNCLASSIFIED` and protocol exposure is
-  withheld rather than guessed.
-- **No identity attribution.** Addresses are never mapped to real-world
-  identities.
-- **Token amounts are never summed across assets.** One NVDA plus one AAPL is
-  not two of anything. Cross-asset figures are counts, or a USD notional priced
-  at the moment of each transfer.
-
-## Further reading
-
-- [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) — why the product refuses to fill a blank.
-- [`docs/NEON-SETUP.md`](docs/NEON-SETUP.md) — database setup, start to finish.
-- [`docs/BRAND.md`](docs/BRAND.md) — identity, and the rules around the mark.
-- `/docs` in the running app — architecture, methodology, data sources, API
-  reference, status and limitations.
+FOLDMARK is open source and released under the [MIT License](LICENSE).
