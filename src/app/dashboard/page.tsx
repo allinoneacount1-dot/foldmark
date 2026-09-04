@@ -9,6 +9,7 @@ import { ChipLink, ChipGroup } from "@/components/ui/controls";
 import { MarketChartPanel } from "@/components/charts/MarketChartPanel";
 import { ReferenceChart } from "@/components/charts/ReferenceChart";
 import { TopologyView } from "@/components/graph/TopologyView";
+import { FoldmarkTopologyPreview } from "@/components/topology/FoldmarkTopologyPreview";
 import {
   CapitalFlowModule,
   NetworkActivityModule,
@@ -433,9 +434,13 @@ export default async function DashboardPage({
               </Link>
             }
           >
-            <div className="flex h-[26rem] min-h-0">
-              <TopologyView graph={graph} state={activity.state} />
-            </div>
+            {graph.nodes.length > 0 ? (
+              <div className="flex h-[26rem] min-h-0">
+                <TopologyView graph={graph} state={activity.state} />
+              </div>
+            ) : (
+              <FoldmarkTopologyPreview variant="compact" className="border-0" />
+            )}
           </Figure>
           {/*
             The methodology describes an encoding. While the preview is drawn

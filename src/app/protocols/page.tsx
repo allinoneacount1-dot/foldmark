@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Shell, Split, PageHead } from "@/components/layout/Frame";
+import { ClassificationPipeline } from "@/components/intelligence/ClassificationPipeline";
 import { Panel, PanelHeader, Methodology, StateTag } from "@/components/ui/primitives";
 import { Ledger, LedgerRow, LedgerCell, type LedgerColumn } from "@/components/ui/Ledger";
 import { Figure } from "@/components/ui/Figure";
@@ -97,7 +98,7 @@ export default async function ProtocolsPage() {
                   sideways. */}
               <div className="w-full overflow-x-auto px-4 py-6 sm:px-6">
                 <div className="min-w-[660px]">
-                  <ClassificationPipeline />
+                  <ClassificationPipeline mode="model" />
                 </div>
               </div>
               {/* Four stages divide evenly into one, two and four columns, so
@@ -135,6 +136,19 @@ export default async function ProtocolsPage() {
               </p>
             </div>
           </Figure>
+        </div>
+
+        {/*
+          The model, not a state. No entity is in view here, so no stage is
+          marked current — and VERIFIED stays dark because no authoritative
+          source is wired for this chain. Lighting it would assert exactly the
+          thing the registry below reports it does not have.
+        */}
+        <div className="mt-8">
+          <ClassificationPipeline
+            mode="model"
+            caption="A contract enters at OBSERVED and moves only as far as its evidence carries it. Nothing on this chain reaches VERIFIED yet: that needs an issuer-published address, and a ticker or a name is not one."
+          />
         </div>
 
         <div className="mt-8">
@@ -426,111 +440,5 @@ const CONTRACT_ENTRY: ReadonlyArray<readonly [string, string]> = [
   ["ATTRIBUTED", "Where a protocol owns it, the contract carries that protocol's id — and activity follows."],
 ];
 
-/**
- * The classification pipeline, drawn.
- *
- * Four stages and the gates between them. It contains no address, no name and
- * no count: it is the rule the product follows, which is true on a chain with
- * a hundred verified protocols and on one with none. Every box is the same
- * size, because none of them is a quantity.
- */
-const STAGE_W = 160;
-const STAGE_H = 46;
-const STAGE_X = [16, 205, 394, 583] as const;
 
-function ClassificationPipeline() {
-  return (
-    <svg
-      viewBox="0 0 760 96"
-      preserveAspectRatio="xMidYMid meet"
-      className="h-auto w-full"
-      role="img"
-      aria-label="Classification pipeline: an address is observed, then identified against a known deployment, then categorised, then verified. Only a verified protocol is listed, and only then may a flow through it be classified. A structural diagram containing no observed data."
-    >
-      <defs>
-        <marker
-          id="fm-protocol-stage-arrow"
-          viewBox="0 0 6 6"
-          refX="6"
-          refY="3"
-          markerWidth="6"
-          markerHeight="6"
-          orient="auto"
-          markerUnits="userSpaceOnUse"
-        >
-          <path d="M0 0 6 3 0 6Z" fill="var(--color-ink-faint)" />
-        </marker>
-      </defs>
 
-      <g fill="none" stroke="var(--color-ink-faint)" strokeWidth="1" markerEnd="url(#fm-protocol-stage-arrow)">
-        {STAGE_X.slice(0, 3).map((x, i) => (
-          <line key={x} x1={x + STAGE_W} y1={STAGE_H / 2 + 24} x2={STAGE_X[i + 1]} y2={STAGE_H / 2 + 24} />
-        ))}
-      </g>
-
-      {STAGES.map((s, i) => {
-        const x = STAGE_X[i];
-        const last = i === STAGES.length - 1;
-        return (
-          <g key={s.name}>
-            <rect
-              x={x}
-              y={24}
-              width={STAGE_W}
-              height={STAGE_H}
-              fill="var(--color-surface)"
-              stroke={last ? "var(--color-rule-strong)" : "var(--color-rule-strong)"}
-              strokeWidth="1"
-            />
-            {/* The one accent: the gate a protocol must pass to be listed. */}
-            {last ? <rect x={x} y={24} width="2" height={STAGE_H} fill="var(--color-signal)" /> : null}
-            <text
-              x={x + 12}
-              y={41}
-              fontFamily="var(--font-mono)"
-              fontSize="9"
-              letterSpacing="1.6"
-              fill="var(--color-ink-faint)"
-            >
-              {s.index}
-            </text>
-            <text
-              x={x + STAGE_W / 2}
-              y={58}
-              textAnchor="middle"
-              fontFamily="var(--font-mono)"
-              fontSize="11"
-              letterSpacing="1.6"
-              fill={last ? "var(--color-ink)" : "var(--color-ink-muted)"}
-            >
-              {s.name}
-            </text>
-          </g>
-        );
-      })}
-
-      <text
-        x={STAGE_X[3] + STAGE_W / 2}
-        y={88}
-        textAnchor="middle"
-        fontFamily="var(--font-mono)"
-        fontSize="9"
-        letterSpacing="1.6"
-        fill="var(--color-ink-faint)"
-      >
-        LISTED · FLOWS CLASSIFIABLE
-      </text>
-      <text
-        x={STAGE_X[0] + STAGE_W / 2}
-        y={16}
-        textAnchor="middle"
-        fontFamily="var(--font-mono)"
-        fontSize="9"
-        letterSpacing="1.6"
-        fill="var(--color-ink-faint)"
-      >
-        FROM TRANSFER LOGS
-      </text>
-    </svg>
-  );
-}

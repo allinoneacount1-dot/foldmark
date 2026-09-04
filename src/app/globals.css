@@ -490,3 +490,184 @@ body {
     opacity: 1;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   FOLDMARK market topology — the architecture diagram.
+
+   Kept here rather than inline so the SVG stays readable and so hover states
+   are one cascade rather than a prop threaded through every node. Colours are
+   the existing tokens; nothing new enters the palette.
+   --------------------------------------------------------------------------- */
+.fm-topo {
+  --fm-grid: rgba(242, 240, 232, 0.055);
+  --fm-dot: rgba(199, 255, 74, 0.16);
+  --fm-icon: #9AA394;
+}
+
+.fm-topo .fm-card {
+  fill: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  stroke: var(--color-rule);
+  stroke-width: 1;
+}
+.fm-topo .fm-rail {
+  fill: var(--color-signal);
+}
+.fm-topo .fm-label {
+  fill: var(--color-ink-muted);
+  font-family: ui-monospace, "Geist Mono", monospace;
+  font-size: 21px;
+  letter-spacing: 0.16em;
+}
+.fm-topo .fm-label-lg {
+  fill: var(--color-ink);
+  font-family: ui-monospace, "Geist Mono", monospace;
+  font-size: 30px;
+  letter-spacing: 0.13em;
+}
+.fm-topo .fm-ellipsis {
+  fill: var(--color-ink-dim);
+  font-family: ui-monospace, "Geist Mono", monospace;
+  font-size: 20px;
+  letter-spacing: 0.2em;
+}
+.fm-topo .fm-lane {
+  fill: var(--color-ink-muted);
+  font-family: ui-monospace, "Geist Mono", monospace;
+  font-size: 19px;
+  letter-spacing: 0.34em;
+}
+.fm-topo .fm-lane-rule {
+  stroke: var(--color-signal);
+  stroke-width: 2;
+  opacity: 0.75;
+}
+
+/* Connectors. Visible by default — the previous pass drew them faintly enough
+   to read as an empty canvas, which is the failure this composition exists to
+   fix. Hover raises the pair rather than introducing a new colour. */
+.fm-topo .fm-wire path {
+  stroke: color-mix(in srgb, var(--color-ink) 34%, transparent);
+  stroke-width: 1.5;
+  fill: none;
+}
+.fm-topo .fm-wire .fm-term {
+  fill: var(--color-signal);
+  opacity: 0.55;
+}
+.fm-topo .fm-wire .fm-arrow {
+  stroke: color-mix(in srgb, var(--color-ink) 52%, transparent);
+  stroke-width: 1.8;
+  fill: none;
+}
+.fm-topo .fm-wire[data-lit] path {
+  stroke: color-mix(in srgb, var(--color-signal) 78%, transparent);
+}
+.fm-topo .fm-wire[data-lit] .fm-arrow {
+  stroke: var(--color-signal);
+}
+.fm-topo .fm-wire[data-lit] .fm-term {
+  opacity: 1;
+}
+
+.fm-topo .fm-node {
+  cursor: default;
+  outline: none;
+  transition: opacity var(--motion-fast, 140ms) ease;
+}
+.fm-topo .fm-node[data-dimmed] {
+  opacity: 0.42;
+}
+.fm-topo .fm-node[data-active] .fm-card {
+  stroke: color-mix(in srgb, var(--color-signal) 55%, transparent);
+}
+.fm-topo .fm-node:focus-visible .fm-card {
+  stroke: var(--color-signal);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fm-topo .fm-node {
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Classification pipeline — OBSERVED to VERIFIED.
+
+   State drives every colour here. `neutral` is the model with no entity in
+   view; `current` is where something actually is; `future` is unreached and
+   stays dark. VERIFIED only glows when it is genuinely current, which today is
+   never, because no authoritative source is wired.
+   --------------------------------------------------------------------------- */
+.cp .cp-card {
+  border: 1px solid var(--color-rule);
+  background: color-mix(in srgb, var(--color-surface) 70%, transparent);
+  transition:
+    border-color var(--motion-micro, 200ms) ease,
+    background-color var(--motion-micro, 200ms) ease;
+}
+.cp .cp-card:hover,
+.cp .cp-card:focus-visible {
+  border-color: var(--color-rule-strong);
+  outline: none;
+}
+
+.cp .cp-n {
+  color: color-mix(in srgb, var(--color-signal) 72%, transparent);
+}
+.cp .cp-n-rule {
+  background: color-mix(in srgb, var(--color-signal) 55%, transparent);
+}
+.cp .cp-name {
+  color: var(--color-ink-muted);
+}
+.cp .cp-plus {
+  color: var(--color-ink-dim);
+}
+
+/* corner calibration marks */
+.cp .cp-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-color: var(--color-rule-strong);
+  border-style: solid;
+  border-width: 0;
+}
+.cp .cp-tl { top: 6px; left: 6px; border-top-width: 1px; border-left-width: 1px; }
+.cp .cp-tr { top: 6px; right: 6px; border-top-width: 1px; border-right-width: 1px; }
+.cp .cp-bl { bottom: 6px; left: 6px; border-bottom-width: 1px; border-left-width: 1px; }
+.cp .cp-br { bottom: 6px; right: 6px; border-bottom-width: 1px; border-right-width: 1px; }
+
+/* a stage the entity has passed */
+.cp .cp-card[data-state="done"] { border-color: var(--color-rule-strong); }
+.cp .cp-card[data-state="done"] .cp-name { color: var(--color-ink); }
+
+/* where it actually is — the only place the accent is spent */
+.cp .cp-card[data-state="current"] {
+  border-color: color-mix(in srgb, var(--color-signal) 62%, transparent);
+  background: color-mix(in srgb, var(--color-signal) 5%, var(--color-surface));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-signal) 18%, transparent);
+}
+.cp .cp-card[data-state="current"] .cp-name { color: var(--color-ink); }
+.cp .cp-card[data-state="current"] .cp-corner { border-color: var(--color-signal); }
+.cp .cp-card[data-state="current"]::before {
+  content: "";
+  position: absolute;
+  inset: -1px auto -1px -1px;
+  width: 3px;
+  background: var(--color-signal);
+}
+
+/* not reached. Dark, and it stays dark until evidence says otherwise. */
+.cp .cp-card[data-state="future"] { opacity: 0.55; }
+.cp .cp-card[data-state="future"] .cp-name { color: var(--color-ink-dim); }
+.cp .cp-card[data-state="future"] .cp-n { color: var(--color-ink-dim); }
+.cp .cp-card[data-state="future"] .cp-n-rule { background: var(--color-rule-strong); }
+
+.cp .cp-line { stroke: color-mix(in srgb, var(--color-ink) 34%, transparent); stroke-width: 1.2; fill: none; }
+.cp .cp-head { stroke: color-mix(in srgb, var(--color-ink) 52%, transparent); stroke-width: 1.4; fill: none; }
+.cp .cp-term { fill: color-mix(in srgb, var(--color-signal) 70%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .cp .cp-card { transition: none; }
+}

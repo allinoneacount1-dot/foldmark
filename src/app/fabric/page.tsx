@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { TopologyView } from "@/components/graph/TopologyView";
+import { FoldmarkTopologyPreview } from "@/components/topology/FoldmarkTopologyPreview";
 import { RailColumn } from "@/components/layout/Frame";
 import { ChipLink, ChipGroup } from "@/components/ui/controls";
 import { StateTag } from "@/components/ui/primitives";
@@ -149,9 +150,21 @@ export default async function FabricPage({
               rather than sitting in a short band above empty ground. On a
               narrow viewport it is given a fixed, generous height; from lg it
               simply takes everything the row has left. */}
-          <div className="flex h-[28rem] min-h-0 shrink-0 sm:h-[34rem] lg:h-auto lg:flex-1">
-            <TopologyView graph={graph} state={topology} />
-          </div>
+          {/*
+            With an observed graph the canvas draws it. With none, the surface
+            shows the composition the product reads markets in — sources left,
+            assets through the middle, counterparties right — which is a fact
+            about FOLDMARK rather than a claim about the chain.
+          */}
+          {drawn ? (
+            <div className="flex h-[28rem] min-h-0 shrink-0 sm:h-[34rem] lg:h-auto lg:flex-1">
+              <TopologyView graph={graph} state={topology} />
+            </div>
+          ) : (
+            <div className="min-h-0 shrink-0 lg:flex-1">
+              <FoldmarkTopologyPreview variant="full" className="border-0" />
+            </div>
+          )}
           {/* The measured legend documents a measured encoding: radius as
               observed value, edge weight as value transferred, the ring as the
               newest indexed block. None of that is on screen while the canvas
