@@ -9,7 +9,7 @@ import { ChipLink, ChipGroup } from "@/components/ui/controls";
 import { MarketChartPanel } from "@/components/charts/MarketChartPanel";
 import { ReferenceChart } from "@/components/charts/ReferenceChart";
 import { TopologyView } from "@/components/graph/TopologyView";
-import { FoldmarkTopologyPreview } from "@/components/topology/FoldmarkTopologyPreview";
+import { FoldmarkFlowArchitecture } from "@/components/flows/FoldmarkFlowArchitecture";
 import {
   CapitalFlowModule,
   NetworkActivityModule,
@@ -439,7 +439,7 @@ export default async function DashboardPage({
                 <TopologyView graph={graph} state={activity.state} />
               </div>
             ) : (
-              <FoldmarkTopologyPreview variant="compact" className="border-0" />
+              <FoldmarkFlowArchitecture variant="compact" className="border-0" />
             )}
           </Figure>
           {/*

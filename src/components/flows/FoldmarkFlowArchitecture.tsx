@@ -3,14 +3,17 @@
 import { useId, useState } from "react";
 
 /**
- * The market topology, as a composition rather than a graph.
+ * The flow architecture: SOURCE to ASSET to COUNTERPARTY.
  *
- * FOLDMARK's measured canvas draws whatever the index observed, which before a
- * database is connected is nothing. This is the other thing a topology surface
- * can honestly be: a diagram of the SHAPE the product reads markets in —
- * sources on the left, assets through the middle, counterparties on the right.
- * That shape is real and fixed whether or not any particular transfer has been
- * seen, so drawing it claims nothing.
+ * This is what a flow IS — value leaving somewhere, passing through an asset,
+ * arriving somewhere else — so it belongs to /flows rather than to the map.
+ * /fabric answers a spatial question (how is this market shaped?) with a canvas
+ * you can pan and inspect; this answers a directional one (what path does value
+ * take?) with a composition you read left to right. Two different questions,
+ * and putting this diagram on the map route confused them.
+ *
+ * The shape is real and fixed whether or not any particular transfer has been
+ * observed, so drawing it claims nothing.
  *
  * WHAT KEEPS IT HONEST
  *
@@ -201,7 +204,7 @@ function Card({
 
 /* ----------------------------------------------------------------- module */
 
-export function FoldmarkTopologyPreview({
+export function FoldmarkFlowArchitecture({
   variant = "full",
   className = "",
 }: {

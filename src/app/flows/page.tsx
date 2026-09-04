@@ -29,6 +29,8 @@ import {
 } from "@/lib/queries";
 import { blockLabel, compact, integer, shortAddress, signed, utcClock } from "@/lib/format";
 import { WINDOWS, CHAIN, type FlowWindow } from "@/config/site";
+import { FoldmarkFlowArchitecture } from "@/components/flows/FoldmarkFlowArchitecture";
+import { ClassificationPipeline } from "@/components/intelligence/ClassificationPipeline";
 import {
   FLOW_CLASSES,
   parseFlowClass,
@@ -300,15 +302,27 @@ export default async function FlowsPage({
               aside={<span className="label-s border border-rule px-1.5 py-0.5 text-ink-faint">ARCHITECTURE</span>}
             >
               <div className="flex min-h-0 flex-col">
-                {/* The diagram has a minimum legible width, so on a narrow
-                    screen it scrolls inside its own region rather than shrinking
-                    its labels to four pixels. The page itself never scrolls
-                    sideways. */}
-                <div className="w-full overflow-x-auto px-4 py-6 sm:px-6">
-                  <div className="min-w-[680px]">
-                    <FlowArchitecture />
-                  </div>
-                </div>
+                {/*
+                  The signature composition. It carries its own responsive
+                  behaviour — a three-column diagram on desktop, a stacked one
+                  below sm — so it needs no scroll wrapper and the page never
+                  scrolls sideways.
+                */}
+                <FoldmarkFlowArchitecture variant="full" className="border-0" />
+
+                {/*
+                  Directly beneath the architecture, because it is the next
+                  question a reader has: the diagram shows where value goes, and
+                  this shows how far FOLDMARK can go in saying what that
+                  movement was. Model mode — no entity is in view, so no stage
+                  is current, and VERIFIED stays dark because nothing on this
+                  chain reaches it.
+                */}
+                <ClassificationPipeline
+                  mode="model"
+                  className="border-0 border-t border-rule"
+                  caption="A flow is named only when the counterparty contract is identified. Until a venue registry exists for this chain, every flow reads UNCLASSIFIED — a real answer about an unknown counterparty, not a placeholder for a better one."
+                />
                 {/* Six entries divide evenly into one, two and three columns,
                     so the rule-toned gap can never show through a cell no entry
                     occupies. That is the condition for using this technique at
@@ -730,156 +744,4 @@ const ENGINE_OUTPUTS: ReadonlyArray<readonly [string, string]> = [
   ["NOTIONAL MOVED", "A USD total, computed only where every transfer aligns to a price observed at or before it."],
 ];
 
-/**
- * The shape of a flow, drawn.
- *
- * Three ranks — where value left, what moved, where it arrived — connected by
- * orthogonal runs, in the same left-to-right reading the measured graph uses,
- * so this teaches the layout a visitor will later read real edges in.
- *
- * WHAT KEEPS IT HONEST: every node is a CATEGORY. None of them names a
- * contract, a symbol, a protocol or an address. Nothing in the drawing is
- * denominated — there is no amount, no percentage, no weight, and no node is
- * larger than another. The geometry is deliberately regular, and a market never
- * produces an evenly spaced lattice, which is what makes this unmistakable for
- * an observation.
- */
-const ARCH_BOX_W = 150;
-const ARCH_BOX_H = 40;
 
-const ARCH_SOURCE = [
-  { y: 32, label: "WALLET" },
-  { y: 92, label: "WALLET CLUSTER" },
-  { y: 152, label: "PROTOCOL" },
-] as const;
-
-const ARCH_ASSET = [
-  { y: 62, label: "ASSET A" },
-  { y: 122, label: "ASSET B" },
-] as const;
-
-const ARCH_COUNTERPARTY = [
-  { y: 32, label: "WALLET" },
-  { y: 92, label: "MARKET" },
-  { y: 152, label: "LIQUIDITY" },
-] as const;
-
-const ARCH_LEFT_EDGES: ReadonlyArray<readonly [number, number]> = [
-  [0, 0],
-  [1, 0],
-  [1, 1],
-  [2, 1],
-];
-
-const ARCH_RIGHT_EDGES: ReadonlyArray<readonly [number, number]> = [
-  [0, 0],
-  [0, 1],
-  [1, 1],
-  [1, 2],
-];
-
-/** An orthogonal run: out of one box, across, down, into the next. */
-function elbow(x1: number, y1: number, x2: number, y2: number, mid: number): string {
-  return `M${x1} ${y1}H${mid}V${y2}H${x2}`;
-}
-
-function ArchBox({ x, y, label, spine = false }: { x: number; y: number; label: string; spine?: boolean }) {
-  return (
-    <g>
-      <rect
-        x={x}
-        y={y}
-        width={ARCH_BOX_W}
-        height={ARCH_BOX_H}
-        fill="var(--color-surface)"
-        stroke="var(--color-rule-strong)"
-        strokeWidth="1"
-      />
-      {/* The one accent on the page's structural drawing: a ledger marker on
-          the asset rank, which is the spine every flow passes through. */}
-      {spine ? <rect x={x} y={y} width="2" height={ARCH_BOX_H} fill="var(--color-signal)" /> : null}
-      <text
-        x={x + ARCH_BOX_W / 2}
-        y={y + ARCH_BOX_H / 2 + 4}
-        textAnchor="middle"
-        fontFamily="var(--font-mono)"
-        fontSize="10"
-        letterSpacing="1.5"
-        fill={spine ? "var(--color-ink)" : "var(--color-ink-muted)"}
-      >
-        {label}
-      </text>
-    </g>
-  );
-}
-
-function FlowArchitecture() {
-  const colA = 16;
-  const colB = 305;
-  const colC = 594;
-  const midAB = 236;
-  const midBC = 524;
-  const centre = (y: number) => y + ARCH_BOX_H / 2;
-
-  return (
-    <svg
-      viewBox="0 0 760 208"
-      preserveAspectRatio="xMidYMid meet"
-      className="h-auto w-full"
-      role="img"
-      aria-label="Flow architecture: value leaves a source address, moves as one asset, and arrives at a counterparty which may be a wallet, a market or a liquidity venue. A structural diagram containing no observed data."
-    >
-      <defs>
-        <marker
-          id="fm-flow-arch-arrow"
-          viewBox="0 0 6 6"
-          refX="6"
-          refY="3"
-          markerWidth="6"
-          markerHeight="6"
-          orient="auto"
-          markerUnits="userSpaceOnUse"
-        >
-          <path d="M0 0 6 3 0 6Z" fill="var(--color-ink-faint)" />
-        </marker>
-      </defs>
-
-      <g fontFamily="var(--font-mono)" fontSize="10" letterSpacing="1.8" fill="var(--color-ink-dim)" textAnchor="middle">
-        <text x={colA + ARCH_BOX_W / 2} y="14">
-          SOURCE
-        </text>
-        <text x={colB + ARCH_BOX_W / 2} y="14">
-          ASSET
-        </text>
-        <text x={colC + ARCH_BOX_W / 2} y="14">
-          COUNTERPARTY
-        </text>
-      </g>
-
-      <g fill="none" stroke="var(--color-ink-faint)" strokeWidth="1" markerEnd="url(#fm-flow-arch-arrow)">
-        {ARCH_LEFT_EDGES.map(([from, to]) => (
-          <path
-            key={`l${from}-${to}`}
-            d={elbow(colA + ARCH_BOX_W, centre(ARCH_SOURCE[from].y), colB, centre(ARCH_ASSET[to].y), midAB)}
-          />
-        ))}
-        {ARCH_RIGHT_EDGES.map(([from, to]) => (
-          <path
-            key={`r${from}-${to}`}
-            d={elbow(colB + ARCH_BOX_W, centre(ARCH_ASSET[from].y), colC, centre(ARCH_COUNTERPARTY[to].y), midBC)}
-          />
-        ))}
-      </g>
-
-      {ARCH_SOURCE.map((n) => (
-        <ArchBox key={`s${n.y}`} x={colA} y={n.y} label={n.label} />
-      ))}
-      {ARCH_ASSET.map((n) => (
-        <ArchBox key={`a${n.y}`} x={colB} y={n.y} label={n.label} spine />
-      ))}
-      {ARCH_COUNTERPARTY.map((n) => (
-        <ArchBox key={`c${n.y}`} x={colC} y={n.y} label={n.label} />
-      ))}
-    </svg>
-  );
-}

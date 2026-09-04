@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { TopologyView } from "@/components/graph/TopologyView";
-import { FoldmarkTopologyPreview } from "@/components/topology/FoldmarkTopologyPreview";
 import { RailColumn } from "@/components/layout/Frame";
 import { ChipLink, ChipGroup } from "@/components/ui/controls";
 import { StateTag } from "@/components/ui/primitives";
@@ -156,15 +155,17 @@ export default async function FabricPage({
             assets through the middle, counterparties right — which is a fact
             about FOLDMARK rather than a claim about the chain.
           */}
-          {drawn ? (
-            <div className="flex h-[28rem] min-h-0 shrink-0 sm:h-[34rem] lg:h-auto lg:flex-1">
-              <TopologyView graph={graph} state={topology} />
-            </div>
-          ) : (
-            <div className="min-h-0 shrink-0 lg:flex-1">
-              <FoldmarkTopologyPreview variant="full" className="border-0" />
-            </div>
-          )}
+          {/*
+            The map is always the canvas. TopologyView draws the observed graph
+            when there is one and its own spatial architecture preview when
+            there is not — both pannable, hoverable and inspectable, because
+            /fabric answers a spatial question either way. The card-based
+            SOURCE-to-COUNTERPARTY diagram answers a directional one and lives
+            on /flows.
+          */}
+          <div className="flex h-[28rem] min-h-0 shrink-0 sm:h-[34rem] lg:h-auto lg:flex-1">
+            <TopologyView graph={graph} state={topology} />
+          </div>
           {/* The measured legend documents a measured encoding: radius as
               observed value, edge weight as value transferred, the ring as the
               newest indexed block. None of that is on screen while the canvas
