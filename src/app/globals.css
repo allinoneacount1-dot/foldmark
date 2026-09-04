@@ -435,7 +435,10 @@ body {
   );
   background-size: 220% 100%;
   background-repeat: no-repeat;
-  animation: m-chart-scan 5.6s var(--ease-inout) infinite;
+  /* Bounded, not infinite. A surface that never receives data would otherwise
+     shimmer forever, which reads as a stuck loader rather than an instrument at
+     rest. Three passes say "listening", then the frame settles. */
+  animation: m-chart-scan 5.6s var(--ease-inout) 3;
 }
 
 @keyframes m-receiver {

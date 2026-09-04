@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { Shell, Split, PageHead } from "@/components/layout/Frame";
 import {
   Panel,
@@ -7,14 +8,12 @@ import {
   Methodology,
   StateTag,
   CoverageNote,
-  AbsentValue,
 } from "@/components/ui/primitives";
-import type { DataState } from "@/lib/data-state";
-import type { Surface } from "@/lib/presentation-state";
 import { ChipLink, ChipGroup } from "@/components/ui/controls";
-import { Ledger, LedgerRow, LedgerCell, LedgerEmpty, type LedgerColumn } from "@/components/ui/Ledger";
+import { Ledger, LedgerRow, LedgerCell, type LedgerColumn } from "@/components/ui/Ledger";
 import { Histogram, MagnitudeRow, FlowBar } from "@/components/charts";
 import { Figure } from "@/components/ui/Figure";
+import { getPulse, type Pulse } from "@/lib/chain";
 import {
   getAssets,
   getWindowActivity,
@@ -27,7 +26,7 @@ import {
   since,
   requestNow,
 } from "@/lib/queries";
-import { compact, integer, shortAddress, signed } from "@/lib/format";
+import { blockLabel, compact, integer, shortAddress, signed, utcClock } from "@/lib/format";
 import { WINDOWS, CHAIN, type FlowWindow } from "@/config/site";
 import { toNotional, notionalNote, prepareSeries, DEFAULT_ALIGNMENT } from "@/lib/notional";
 
@@ -65,10 +64,17 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
   const window: FlowWindow = (WINDOWS as readonly string[]).includes(params.w ?? "") ? (params.w as FlowWindow) : "24H";
   const now = await requestNow();
 
-  const [assetsResult, activity, flowRows] = await Promise.all([
+  const [assetsResult, activity, flowRows, pulse] = await Promise.all([
     getAssets(),
     getWindowActivity(window, now),
     getFlowWindows(window),
+    /**
+     * The chain answers with no database attached. Head, endpoint and round
+     * trip are real measurements taken on this request, and they are why this
+     * page can be honest about having folded nothing yet and still be visibly
+     * connected to a live chain.
+     */
+    getPulse(),
   ]);
 
   const assets = assetsResult.rows;
@@ -133,19 +139,22 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
    * The headline row.
    *
    * A tile prints a figure only when the window was actually queried — a zero
-   * from a successful query is a measurement and is shown as one. Until the
-   * index reaches the window there is no measurement, so the tile prints a dash
-   * and names what it is waiting for, in the terms of the thing that is absent:
-   * an edge is flow, an address is a wallet, a notional is market data.
+   * from a successful query is a measurement and is shown as one. Until then
+   * the slot holds a rule and the tile says what will be counted into it.
+   *
+   * What it must never hold is a number. What it should not hold is the same
+   * status word five times over: a reader facing five identical chips learns
+   * nothing about the five different quantities underneath them, and the row
+   * reads as a dashboard that broke rather than one that has not started. The
+   * page states its condition once, in the strip above.
    */
   const observed = activity.state !== "INDEXING" && activity.state !== "UNAVAILABLE";
-  const tiles: { label: string; value: string | null; unit: string; state: DataState; surface: Surface }[] = [
+  const tiles: { label: string; value: string | null; unit: string; defines: string }[] = [
     {
       label: "TRANSFERS ON EDGES",
       value: observed ? integer(totalTransfers) : null,
       unit: "OBSERVED",
-      state: activity.state,
-      surface: "flow",
+      defines: "TRANSFERS CARRIED BY FOLDED EDGES",
     },
     {
       label: "NOTIONAL MOVED",
@@ -156,31 +165,37 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
           : notional.state === "OK"
             ? "USD · EVERY TRANSFER PRICED"
             : "NO ALIGNED PRICE",
-      state: notional.state,
-      surface: "market",
+      defines: "USD, ONLY WHERE EACH TRANSFER IS PRICED",
     },
     {
       label: "TRANSFERS",
       value: observed ? integer(activity.transfers) : null,
       unit: window,
-      state: activity.state,
-      surface: "activity",
+      defines: `ERC-20 TRANSFER LOGS IN ${window}`,
     },
     {
       label: "DIRECTED EDGES",
       value: observed ? integer(activity.uniquePairs) : null,
       unit: "ADDRESS PAIRS",
-      state: activity.state,
-      surface: "flow",
+      defines: "DISTINCT SENDER / RECEIVER PAIRS",
     },
     {
       label: "ACTIVE ADDRESSES",
       value: observed ? integer(activity.activeAddresses) : null,
       unit: window,
-      state: activity.state,
-      surface: "wallet",
+      defines: "ADDRESSES PARTY TO A TRANSFER",
     },
   ];
+
+  /**
+   * Which composition the page draws.
+   *
+   * With edges, the measured instrument. Without them, the architecture: the
+   * shape of a flow is real whether or not one has been observed, and drawing
+   * that shape is not the same act as drawing a market.
+   */
+  const hasFlow = edges.length > 0;
+  const hasActivity = activity.rows.length > 0;
 
   return (
     <Shell>
@@ -200,49 +215,98 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
           }
         />
 
+        {/* The page's one state chip, set beside the values that are live
+            whether or not anything has been indexed. */}
+        <div className="mt-6">
+          <ChainStrip pulse={pulse}>
+            <StateTag state={activity.state} surface="flow" />
+          </ChainStrip>
+        </div>
+
         {activity.coverageNote ? (
-          <div className="mt-6 border border-rule">
+          <div className="mt-3 border border-rule">
             <CoverageNote note={activity.coverageNote} />
           </div>
         ) : null}
 
-        <div className="mt-6 grid gap-px bg-rule sm:grid-cols-2 lg:grid-cols-4">
+        {/*
+          Five tiles never divide evenly into two or four columns, and the grid
+          used to draw its hairlines by showing a rule-toned background through
+          a one-pixel gap — which meant the cells no tile occupied were painted
+          in that tone too: a lighter block, three columns wide, sitting beside
+          the last figure with nothing in it. The rules are drawn by the tiles
+          themselves now, so the row simply ends where the tiles do.
+        */}
+        <div className="mt-6 grid border-t border-l border-rule sm:grid-cols-2 lg:grid-cols-4">
           {tiles.map((t) => (
-            <div key={t.label} className="bg-void p-4">
+            <div key={t.label} className="border-b border-r border-rule bg-void p-4">
               <p className="label-s">{t.label}</p>
               {t.value !== null ? (
-                <p className="tabular mt-1.5 font-mono text-data-l text-ink">{t.value}</p>
+                <>
+                  <p className="tabular mt-1.5 font-mono text-data-l text-ink">{t.value}</p>
+                  <p className="label-s mt-1 text-ink-faint">{t.unit}</p>
+                </>
               ) : (
-                <div className="mt-1.5">
-                  <AbsentValue state={t.state} surface={t.surface} />
-                </div>
+                <FigureSlot defines={t.defines} />
               )}
-              <p className="label-s mt-1 text-ink-faint">{t.unit}</p>
             </div>
           ))}
         </div>
 
         <div className="mt-6">
-          <Figure
-            index="01"
-            caption={`Transfer rate across the ${window} window, in ${activity.bucketMinutes}-minute intervals.`}
-            provenance="ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS"
-          >
-            <div className="px-4 py-5">
-              <Histogram
-                buckets={activity.buckets}
-                height={72}
-                label={`Transfers per interval across ${window}`}
-                bucketMinutes={activity.bucketMinutes}
-              />
-            </div>
-          </Figure>
+          {hasActivity ? (
+            <Figure
+              index="01"
+              caption={`Transfer rate across the ${window} window, in ${activity.bucketMinutes}-minute intervals.`}
+              provenance="ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS"
+            >
+              <div className="px-4 py-5">
+                <Histogram
+                  buckets={activity.buckets}
+                  height={72}
+                  label={`Transfers per interval across ${window}`}
+                  bucketMinutes={activity.bucketMinutes}
+                />
+              </div>
+            </Figure>
+          ) : (
+            <Figure
+              index="01"
+              caption="The shape of a capital flow — source, asset, counterparty — and the fields an edge carries."
+              provenance="FOLDMARK FLOW MODEL · STRUCTURE ONLY, NO OBSERVATIONS"
+              aside={<span className="label-s border border-rule px-1.5 py-0.5 text-ink-faint">ARCHITECTURE</span>}
+            >
+              <div className="flex min-h-0 flex-col">
+                {/* The diagram has a minimum legible width, so on a narrow
+                    screen it scrolls inside its own region rather than shrinking
+                    its labels to four pixels. The page itself never scrolls
+                    sideways. */}
+                <div className="w-full overflow-x-auto px-4 py-6 sm:px-6">
+                  <div className="min-w-[680px]">
+                    <FlowArchitecture />
+                  </div>
+                </div>
+                {/* Six entries divide evenly into one, two and three columns,
+                    so the rule-toned gap can never show through a cell no entry
+                    occupies. That is the condition for using this technique at
+                    all. */}
+                <dl className="grid grid-cols-1 gap-px border-t border-rule bg-rule sm:grid-cols-2 lg:grid-cols-3">
+                  {EDGE_RECORD.map(([term, definition]) => (
+                    <div key={term} className="flex flex-col gap-1 bg-void px-4 py-3">
+                      <dt className="label-s text-ink-muted">{term}</dt>
+                      <dd className="text-body-s text-ink-faint">{definition}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            </Figure>
+          )}
         </div>
 
         <div className="mt-8">
           <h2 className="label mb-4 border-b border-rule pb-2.5 text-ink-muted">TOP RELATIONSHIPS · {window}</h2>
           <Ledger columns={FLOW_COLUMNS} caption={`Strongest directed value edges observed in the ${window} window`} minWidth={760}>
-            {edges.length ? (
+            {hasFlow ? (
               edges.slice(0, 12).map((e) => (
                 <LedgerRow key={`${e.from}-${e.to}-${e.assetId}`} columns={FLOW_COLUMNS}>
                   <LedgerCell column={FLOW_COLUMNS[0]}>
@@ -270,16 +334,16 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                 </LedgerRow>
               ))
             ) : (
-              <LedgerEmpty
-                state={activity.state}
-                surface="flow"
-                /* An observed-and-empty window earns the instruction to widen it.
-                   A window the index has not reached is still arriving, and the
-                   flow surface says that instead. */
+              /* One designed empty state for the whole ledger, and no status
+                 word repeated down a column. An observed-and-empty window earns
+                 the instruction to widen it; a window the index has not reached
+                 is still arriving, and says that instead. */
+              <LedgerVoid
+                title={activity.state === "EMPTY" ? "No flow observed in this window" : "Awaiting the first folded edge"}
                 detail={
                   activity.state === "EMPTY"
-                    ? "Widen the window, or wait for the indexer to reach blocks containing transfers."
-                    : undefined
+                    ? "Nothing moved between addresses inside the period the index covers. Widen the window, or wait for the indexer to reach blocks containing transfers."
+                    : "An edge is written here the moment the indexer folds a transfer between two addresses. The columns above are the fields each one will carry."
                 }
               />
             )}
@@ -291,157 +355,197 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
             ratio="7:5"
             gap="gap-6"
             left={
-              <div className="grid gap-6 sm:grid-cols-2">
-                <Panel>
-                  <PanelHeader
-                    title="MOST ACTIVE DESTINATIONS"
-                    meta={window}
-                    state={receivers.length ? activity.state : "INDEXING"}
-                    surface="flow"
-                  />
-                  {receivers.length ? (
-                    <div className="px-4 py-2">
-                      {receivers.map(({ activity: a, dominant }) => (
-                        <MagnitudeRow
-                          key={a.address}
-                          label={shortAddress(a.address, 8, 6)}
-                          value={integer(a.transfers)}
-                          fraction={a.transfers / (receivers[0]?.activity.transfers || 1)}
-                          tone="signal"
-                          meta={`${compact(dominant!.inbound)} ${symbols.get(dominant!.assetId) ?? "UNKNOWN"} IN · ${integer(a.assets)} ASSET${a.assets === 1 ? "" : "S"}`}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <EmptyState state={activity.state} surface="flow" />
-                  )}
-                </Panel>
+              hasFlow ? (
+                /* items-start: a grid stretches its children by default, and a
+                   Panel is a toned surface — so the shorter of two side-by-side
+                   panels grew a block of empty surface below its last row to
+                   match its neighbour. A panel ends where its content ends. */
+                <div className="grid items-start gap-6 sm:grid-cols-2">
+                  <Panel>
+                    <PanelHeader
+                      title="MOST ACTIVE DESTINATIONS"
+                      meta={window}
+                      state={receivers.length ? activity.state : "INDEXING"}
+                      surface="flow"
+                    />
+                    {receivers.length ? (
+                      <div className="px-4 py-2">
+                        {receivers.map(({ activity: a, dominant }) => (
+                          <MagnitudeRow
+                            key={a.address}
+                            label={shortAddress(a.address, 8, 6)}
+                            value={integer(a.transfers)}
+                            fraction={a.transfers / (receivers[0]?.activity.transfers || 1)}
+                            tone="signal"
+                            meta={`${compact(dominant!.inbound)} ${symbols.get(dominant!.assetId) ?? "UNKNOWN"} IN · ${integer(a.assets)} ASSET${a.assets === 1 ? "" : "S"}`}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <EmptyState state={activity.state} surface="flow" />
+                    )}
+                  </Panel>
 
-                <Panel>
-                  <PanelHeader
-                    title="MOST ACTIVE SOURCES"
-                    meta={window}
-                    state={senders.length ? activity.state : "INDEXING"}
-                    surface="flow"
-                  />
-                  {senders.length ? (
-                    <div className="px-4 py-2">
-                      {senders.map(({ activity: a, dominant }) => (
-                        <MagnitudeRow
-                          key={a.address}
-                          label={shortAddress(a.address, 8, 6)}
-                          value={integer(a.transfers)}
-                          fraction={a.transfers / (senders[0]?.activity.transfers || 1)}
-                          meta={`${compact(dominant!.outbound)} ${symbols.get(dominant!.assetId) ?? "UNKNOWN"} OUT · ${integer(a.assets)} ASSET${a.assets === 1 ? "" : "S"}`}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <EmptyState state={activity.state} surface="flow" />
-                  )}
-                </Panel>
+                  <Panel>
+                    <PanelHeader
+                      title="MOST ACTIVE SOURCES"
+                      meta={window}
+                      state={senders.length ? activity.state : "INDEXING"}
+                      surface="flow"
+                    />
+                    {senders.length ? (
+                      <div className="px-4 py-2">
+                        {senders.map(({ activity: a, dominant }) => (
+                          <MagnitudeRow
+                            key={a.address}
+                            label={shortAddress(a.address, 8, 6)}
+                            value={integer(a.transfers)}
+                            fraction={a.transfers / (senders[0]?.activity.transfers || 1)}
+                            meta={`${compact(dominant!.outbound)} ${symbols.get(dominant!.assetId) ?? "UNKNOWN"} OUT · ${integer(a.assets)} ASSET${a.assets === 1 ? "" : "S"}`}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <EmptyState state={activity.state} surface="flow" />
+                    )}
+                  </Panel>
 
-                <Panel className="sm:col-span-2">
-                  <PanelHeader
-                    title="MOST TRANSFERRED ASSETS"
-                    meta={window}
-                    state={assetShare.length ? activity.state : "INDEXING"}
-                    surface="flow"
-                  />
-                  {assetShare.length ? (
-                    <div className="px-4 py-2">
-                      {assetShare.map(([id, agg]) => (
-                        <MagnitudeRow
-                          key={id}
-                          label={symbols.get(id) ?? shortAddress(id, 6, 4)}
-                          value={integer(agg.transfers)}
-                          fraction={agg.transfers / (assetShare[0]?.[1].transfers || 1)}
-                          tone="signal"
-                          meta={`${compact(agg.amount)} ${symbols.get(id) ?? "UNITS"} MOVED`}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <EmptyState state={activity.state} surface="flow" />
-                  )}
+                  <Panel className="sm:col-span-2">
+                    <PanelHeader
+                      title="MOST TRANSFERRED ASSETS"
+                      meta={window}
+                      state={assetShare.length ? activity.state : "INDEXING"}
+                      surface="flow"
+                    />
+                    {assetShare.length ? (
+                      <div className="px-4 py-2">
+                        {assetShare.map(([id, agg]) => (
+                          <MagnitudeRow
+                            key={id}
+                            label={symbols.get(id) ?? shortAddress(id, 6, 4)}
+                            value={integer(agg.transfers)}
+                            fraction={agg.transfers / (assetShare[0]?.[1].transfers || 1)}
+                            tone="signal"
+                            meta={`${compact(agg.amount)} ${symbols.get(id) ?? "UNITS"} MOVED`}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <EmptyState state={activity.state} surface="flow" />
+                    )}
+                    <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
+                      {notionalNote(notional)}
+                      {notional.oldestAlignmentDeltaMs !== null
+                        ? ` Widest gap between a transfer and the price used for it: ${Math.round(notional.oldestAlignmentDeltaMs / 60_000)}m.`
+                        : ""}
+                    </p>
+                  </Panel>
+                </div>
+              ) : (
+                /* Those four panels are what the engine produces. Before it has
+                   produced any, the page names them and says what each will
+                   hold — one composition, rather than four boxes each repeating
+                   the same pending sentence. */
+                <Panel>
+                  <PanelHeader title="WHAT THE FLOW ENGINE COMPUTES" meta="PER WINDOW" />
+                  <dl className="flex flex-col">
+                    {ENGINE_OUTPUTS.map(([term, definition]) => (
+                      <div
+                        key={term}
+                        className="flex flex-col gap-1 border-b border-rule-faint px-4 py-3 last:border-b-0 sm:flex-row sm:items-baseline sm:gap-5"
+                      >
+                        <dt className="label-s shrink-0 text-ink-muted sm:w-[13rem]">{term}</dt>
+                        <dd className="text-body-s text-ink-faint">{definition}</dd>
+                      </div>
+                    ))}
+                  </dl>
                   <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
                     {notionalNote(notional)}
-                    {notional.oldestAlignmentDeltaMs !== null
-                      ? ` Widest gap between a transfer and the price used for it: ${Math.round(notional.oldestAlignmentDeltaMs / 60_000)}m.`
-                      : ""}
                   </p>
                 </Panel>
-              </div>
+              )
             }
             right={
               <div className="flex flex-col gap-6">
-                <Panel>
-                  <PanelHeader
-                    title="NET FLOW BY ADDRESS"
-                    meta={window}
-                    state={flowRows.rows.length ? flowRows.state : "INDEXING"}
-                    surface="flow"
-                  />
-                  {flowRows.rows.length ? (
-                    <div className="flex flex-col">
-                      {flowRows.rows.slice(0, 8).map((r) => {
-                        const scale = Math.max(Math.abs(r.inflow), Math.abs(r.outflow), 1);
-                        const symbol = r.asset_id ? symbols.get(r.asset_id) : null;
-                        return (
-                          <div key={r.entity_id} className="border-b border-rule-faint px-4 py-3 last:border-b-0">
-                            <div className="flex items-baseline justify-between gap-3">
-                              <a href={`/wallet/${r.address}`} className="tabular truncate font-mono text-data-s text-ink hover:underline">
-                                {shortAddress(r.address, 8, 6)}
-                              </a>
-                              <span
-                                className={`tabular shrink-0 font-mono text-data-s ${
-                                  r.net_flow >= 0 ? "text-signal" : "text-negative"
-                                }`}
-                              >
-                                {signed(r.net_flow)}
-                              </span>
-                            </div>
-                            {/* The unit is part of the number. Without it, this row is not a fact. */}
-                            <div className="mt-1 flex items-baseline justify-between gap-3">
-                              <span className="label-s text-ink-faint">
-                                {symbol ?? "UNKNOWN ASSET"} · {integer(r.transaction_count)} TX
-                              </span>
-                              <span className="label-s text-ink-faint">{symbol ?? "UNITS"}</span>
-                            </div>
-                            <div className="mt-2">
-                              <FlowBar inflow={r.inflow} outflow={r.outflow} scale={scale} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <EmptyState
-                      state={flowRows.state}
+                {hasFlow ? (
+                  <Panel>
+                    <PanelHeader
+                      title="NET FLOW BY ADDRESS"
+                      meta={window}
+                      state={flowRows.rows.length ? flowRows.state : "INDEXING"}
                       surface="flow"
-                      title="Net flow not yet computed"
-                      detail="Directional flow is precomputed per address by the indexer after each run that commits new transfers."
                     />
-                  )}
-                  <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
-                    Net flow is defined per address <em className="not-italic text-ink-muted">and per asset</em> —
-                    received minus sent, in that asset&rsquo;s own units. It is never summed across assets, because a
-                    token unit only means something next to its own symbol. It is also not defined per token contract,
-                    where a transfer moves balance without changing supply.
-                  </p>
-                </Panel>
+                    {flowRows.rows.length ? (
+                      <div className="flex flex-col">
+                        {flowRows.rows.slice(0, 8).map((r) => {
+                          const scale = Math.max(Math.abs(r.inflow), Math.abs(r.outflow), 1);
+                          const symbol = r.asset_id ? symbols.get(r.asset_id) : null;
+                          return (
+                            <div key={r.entity_id} className="border-b border-rule-faint px-4 py-3 last:border-b-0">
+                              <div className="flex items-baseline justify-between gap-3">
+                                <a
+                                  href={`/wallet/${r.address}`}
+                                  className="tabular truncate font-mono text-data-s text-ink hover:underline"
+                                >
+                                  {shortAddress(r.address, 8, 6)}
+                                </a>
+                                <span
+                                  className={`tabular shrink-0 font-mono text-data-s ${
+                                    r.net_flow >= 0 ? "text-signal" : "text-negative"
+                                  }`}
+                                >
+                                  {signed(r.net_flow)}
+                                </span>
+                              </div>
+                              {/* The unit is part of the number. Without it, this row is not a fact. */}
+                              <div className="mt-1 flex items-baseline justify-between gap-3">
+                                <span className="label-s text-ink-faint">
+                                  {symbol ?? "UNKNOWN ASSET"} · {integer(r.transaction_count)} TX
+                                </span>
+                                <span className="label-s text-ink-faint">{symbol ?? "UNITS"}</span>
+                              </div>
+                              <div className="mt-2">
+                                <FlowBar inflow={r.inflow} outflow={r.outflow} scale={scale} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <EmptyState
+                        state={flowRows.state}
+                        surface="flow"
+                        title="Net flow not yet computed"
+                        detail="Directional flow is precomputed per address by the indexer after each run that commits new transfers."
+                      />
+                    )}
+                    <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
+                      Net flow is defined per address <em className="not-italic text-ink-muted">and per asset</em> —
+                      received minus sent, in that asset&rsquo;s own units. It is never summed across assets, because a
+                      token unit only means something next to its own symbol. It is also not defined per token contract,
+                      where a transfer moves balance without changing supply.
+                    </p>
+                  </Panel>
+                ) : null}
 
                 <Panel>
-                  <PanelHeader title="CLASSIFICATION" state="INDEXING" surface="protocol" />
+                  {/* No state chip: the classification rule below is not a
+                      pending message, it is the product's policy, and it is
+                      true in every state. */}
+                  <PanelHeader title="CLASSIFICATION" meta="COUNTERPARTY DERIVED" />
                   <div className="px-4 py-3">
                     <p className="text-body-s text-ink-muted">
                       FOLDMARK does not guess what a transfer meant. A flow is labelled only when the counterparty
                       contract is identified. Until a venue registry exists for chain {CHAIN.id}, every flow reads
-                      UNCLASSIFIED.
+                      UNCLASSIFIED — which is a real classification for a counterparty whose identity is genuinely
+                      unknown, not a placeholder for one.
                     </p>
                     <ul className="mt-3 flex flex-wrap gap-1.5">
                       {CLASSES.map((c) => (
-                        <li key={c} className="border border-rule px-2 py-1 font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint">
+                        <li
+                          key={c}
+                          className="border border-rule px-2 py-1 font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint"
+                        >
                           {c}
                         </li>
                       ))}
@@ -458,7 +562,11 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                 <div className="border border-rule">
                   <div className="flex items-center justify-between border-b border-rule px-4 py-2.5">
                     <span className="label text-ink">DATA CONDITION</span>
-                    <StateTag state={activity.state} surface="flow" />
+                    {/* Stated once per page. With no flow the strip at the top
+                        already carries it, and a second chip here would be the
+                        beginning of the column of status words this page was
+                        rebuilt to remove. */}
+                    {hasFlow ? <StateTag state={activity.state} surface="flow" /> : null}
                   </div>
                   <Methodology>
                     Every figure on this page is folded at request time from the transfers table over the trailing{" "}
@@ -475,5 +583,269 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
         </div>
       </div>
     </Shell>
+  );
+}
+
+/* ==========================================================================
+   Live chain identity
+   ========================================================================== */
+
+/**
+ * The values that are true with no database attached.
+ *
+ * Chain id comes from configuration; head, endpoint and round trip are measured
+ * on this request. None of it is derived from the index, which is exactly why
+ * it belongs at the top of a page whose index may be empty: the product is
+ * demonstrably reading a live chain even when it has nothing folded to show.
+ */
+function ChainStrip({ pulse, children }: { pulse: Pulse; children?: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border border-rule bg-surface px-4 py-2.5">
+      <ChainFact label="CHAIN" value={String(CHAIN.id)} />
+      <ChainFact label="HEAD" value={blockLabel(pulse.block)} />
+      <ChainFact label="RPC" value={pulse.endpoint} tone="muted" />
+      {pulse.latencyMs !== null ? (
+        <ChainFact label="ROUND TRIP" value={`${integer(pulse.latencyMs)} MS`} tone="muted" />
+      ) : null}
+      <ChainFact label="READ AT" value={utcClock(pulse.updatedAt)} tone="muted" />
+      {children ? <div className="ml-auto shrink-0">{children}</div> : null}
+    </div>
+  );
+}
+
+function ChainFact({ label, value, tone = "ink" }: { label: string; value: string; tone?: "ink" | "muted" }) {
+  return (
+    <div className="flex min-w-0 items-baseline gap-2">
+      <span className="label-s shrink-0 text-ink-dim">{label}</span>
+      <span className={`tabular truncate font-mono text-data-s ${tone === "muted" ? "text-ink-muted" : "text-ink"}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   Absence, designed
+   ========================================================================== */
+
+/**
+ * A metric slot with no metric in it.
+ *
+ * A short rule sits where the numeral would, and the line beneath says what
+ * will be counted into the slot rather than repeating the page's state. The
+ * rule is presentation: it occupies the slot without asserting a value, and it
+ * is the same weight as every other hairline here, so a row of them reads as
+ * ruled stationery rather than as a dashboard that failed.
+ */
+function FigureSlot({ defines }: { defines: string }) {
+  return (
+    <>
+      <span aria-hidden className="mt-1.5 flex h-[1.375rem] items-end">
+        <span className="block h-px w-8 bg-rule-strong" />
+      </span>
+      <p className="label-s mt-1 text-ink-faint">{defines}</p>
+    </>
+  );
+}
+
+/**
+ * The one empty state a ledger gets.
+ *
+ * The headers stay; the body says once what is being waited on, and three ruled
+ * lines mark where rows will be drawn. They are evenly spaced and equal in
+ * length on purpose — regularity is the tell that this is stationery and not a
+ * reading.
+ */
+function LedgerVoid({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="flex flex-col gap-6 px-4 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <div className="min-w-0 max-w-[52ch]">
+        <p className="font-display text-[1.25rem] leading-tight tracking-[-0.02em] text-ink">{title}</p>
+        <p className="mt-2 text-body-s text-ink-muted">{detail}</p>
+      </div>
+      <div aria-hidden className="flex w-full shrink-0 flex-col gap-3 sm:w-[15rem]">
+        <span className="block h-px w-full bg-rule" />
+        <span className="block h-px w-full bg-rule" />
+        <span className="block h-px w-full bg-rule" />
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   Flow architecture
+   ========================================================================== */
+
+/** What a folded edge records — the ledger's columns, defined. */
+const EDGE_RECORD: ReadonlyArray<readonly [string, string]> = [
+  ["SOURCE", "The address the value left. Always a real address, never a label."],
+  ["DESTINATION", "Where it arrived, which may be a wallet, a market or a protocol contract."],
+  ["ASSET", "The token contract that moved. One edge carries one asset."],
+  ["AMOUNT", "Summed over the window, in that asset's own units at its own decimals."],
+  ["TRANSFERS", "How many transfers folded into the edge — the one figure comparable across assets."],
+  ["CLASSIFICATION", "Derived from the counterparty contract, or UNCLASSIFIED while its identity is unknown."],
+];
+
+/** What the engine derives from those edges, once there are any. */
+const ENGINE_OUTPUTS: ReadonlyArray<readonly [string, string]> = [
+  ["DIRECTED EDGES", "Sender, receiver and asset folded into one edge per pair, with the amount in that asset's units."],
+  ["NET FLOW", "Received minus sent, per address and per asset. Never summed across assets."],
+  ["MOST ACTIVE SOURCES", "Addresses ranked by transfers sent inside the window."],
+  ["MOST ACTIVE DESTINATIONS", "Addresses ranked by transfers received inside the window."],
+  ["MOST TRANSFERRED ASSETS", "Assets ranked by transfers observed, each amount kept beside its own symbol."],
+  ["NOTIONAL MOVED", "A USD total, computed only where every transfer aligns to a price observed at or before it."],
+];
+
+/**
+ * The shape of a flow, drawn.
+ *
+ * Three ranks — where value left, what moved, where it arrived — connected by
+ * orthogonal runs, in the same left-to-right reading the measured graph uses,
+ * so this teaches the layout a visitor will later read real edges in.
+ *
+ * WHAT KEEPS IT HONEST: every node is a CATEGORY. None of them names a
+ * contract, a symbol, a protocol or an address. Nothing in the drawing is
+ * denominated — there is no amount, no percentage, no weight, and no node is
+ * larger than another. The geometry is deliberately regular, and a market never
+ * produces an evenly spaced lattice, which is what makes this unmistakable for
+ * an observation.
+ */
+const ARCH_BOX_W = 150;
+const ARCH_BOX_H = 40;
+
+const ARCH_SOURCE = [
+  { y: 32, label: "WALLET" },
+  { y: 92, label: "WALLET CLUSTER" },
+  { y: 152, label: "PROTOCOL" },
+] as const;
+
+const ARCH_ASSET = [
+  { y: 62, label: "ASSET A" },
+  { y: 122, label: "ASSET B" },
+] as const;
+
+const ARCH_COUNTERPARTY = [
+  { y: 32, label: "WALLET" },
+  { y: 92, label: "MARKET" },
+  { y: 152, label: "LIQUIDITY" },
+] as const;
+
+const ARCH_LEFT_EDGES: ReadonlyArray<readonly [number, number]> = [
+  [0, 0],
+  [1, 0],
+  [1, 1],
+  [2, 1],
+];
+
+const ARCH_RIGHT_EDGES: ReadonlyArray<readonly [number, number]> = [
+  [0, 0],
+  [0, 1],
+  [1, 1],
+  [1, 2],
+];
+
+/** An orthogonal run: out of one box, across, down, into the next. */
+function elbow(x1: number, y1: number, x2: number, y2: number, mid: number): string {
+  return `M${x1} ${y1}H${mid}V${y2}H${x2}`;
+}
+
+function ArchBox({ x, y, label, spine = false }: { x: number; y: number; label: string; spine?: boolean }) {
+  return (
+    <g>
+      <rect
+        x={x}
+        y={y}
+        width={ARCH_BOX_W}
+        height={ARCH_BOX_H}
+        fill="var(--color-surface)"
+        stroke="var(--color-rule-strong)"
+        strokeWidth="1"
+      />
+      {/* The one accent on the page's structural drawing: a ledger marker on
+          the asset rank, which is the spine every flow passes through. */}
+      {spine ? <rect x={x} y={y} width="2" height={ARCH_BOX_H} fill="var(--color-signal)" /> : null}
+      <text
+        x={x + ARCH_BOX_W / 2}
+        y={y + ARCH_BOX_H / 2 + 4}
+        textAnchor="middle"
+        fontFamily="var(--font-mono)"
+        fontSize="10"
+        letterSpacing="1.5"
+        fill={spine ? "var(--color-ink)" : "var(--color-ink-muted)"}
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
+function FlowArchitecture() {
+  const colA = 16;
+  const colB = 305;
+  const colC = 594;
+  const midAB = 236;
+  const midBC = 524;
+  const centre = (y: number) => y + ARCH_BOX_H / 2;
+
+  return (
+    <svg
+      viewBox="0 0 760 208"
+      preserveAspectRatio="xMidYMid meet"
+      className="h-auto w-full"
+      role="img"
+      aria-label="Flow architecture: value leaves a source address, moves as one asset, and arrives at a counterparty which may be a wallet, a market or a liquidity venue. A structural diagram containing no observed data."
+    >
+      <defs>
+        <marker
+          id="fm-flow-arch-arrow"
+          viewBox="0 0 6 6"
+          refX="6"
+          refY="3"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto"
+          markerUnits="userSpaceOnUse"
+        >
+          <path d="M0 0 6 3 0 6Z" fill="var(--color-ink-faint)" />
+        </marker>
+      </defs>
+
+      <g fontFamily="var(--font-mono)" fontSize="10" letterSpacing="1.8" fill="var(--color-ink-dim)" textAnchor="middle">
+        <text x={colA + ARCH_BOX_W / 2} y="14">
+          SOURCE
+        </text>
+        <text x={colB + ARCH_BOX_W / 2} y="14">
+          ASSET
+        </text>
+        <text x={colC + ARCH_BOX_W / 2} y="14">
+          COUNTERPARTY
+        </text>
+      </g>
+
+      <g fill="none" stroke="var(--color-ink-faint)" strokeWidth="1" markerEnd="url(#fm-flow-arch-arrow)">
+        {ARCH_LEFT_EDGES.map(([from, to]) => (
+          <path
+            key={`l${from}-${to}`}
+            d={elbow(colA + ARCH_BOX_W, centre(ARCH_SOURCE[from].y), colB, centre(ARCH_ASSET[to].y), midAB)}
+          />
+        ))}
+        {ARCH_RIGHT_EDGES.map(([from, to]) => (
+          <path
+            key={`r${from}-${to}`}
+            d={elbow(colB + ARCH_BOX_W, centre(ARCH_ASSET[from].y), colC, centre(ARCH_COUNTERPARTY[to].y), midBC)}
+          />
+        ))}
+      </g>
+
+      {ARCH_SOURCE.map((n) => (
+        <ArchBox key={`s${n.y}`} x={colA} y={n.y} label={n.label} />
+      ))}
+      {ARCH_ASSET.map((n) => (
+        <ArchBox key={`a${n.y}`} x={colB} y={n.y} label={n.label} spine />
+      ))}
+      {ARCH_COUNTERPARTY.map((n) => (
+        <ArchBox key={`c${n.y}`} x={colC} y={n.y} label={n.label} />
+      ))}
+    </svg>
   );
 }

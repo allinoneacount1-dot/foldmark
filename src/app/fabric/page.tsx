@@ -3,7 +3,12 @@ import { TopologyView } from "@/components/graph/TopologyView";
 import { RailColumn } from "@/components/layout/Frame";
 import { ChipLink, ChipGroup } from "@/components/ui/controls";
 import { StateTag } from "@/components/ui/primitives";
-import { CapitalFlowModule, NetworkActivityModule, TopFlowsModule } from "@/components/intelligence/rail";
+import {
+  CapitalFlowModule,
+  NetworkActivityModule,
+  TopFlowsModule,
+  CapabilityRail,
+} from "@/components/intelligence/rail";
 import { getAssets, getWindowActivity, foldEdges, requestNow, type WindowActivity,
 } from "@/lib/queries";
 import { buildMarketGraph } from "@/lib/graph";
@@ -42,6 +47,16 @@ export default async function FabricPage({
 
   // Recount against the filtered rows so the rail can never contradict the tape.
   const filtered: WindowActivity = typeFilter ? recount(activity, rows, now) : activity;
+
+  /**
+   * Whether the rail has anything measured to report.
+   *
+   * Same test the dashboard uses: either transfers were observed, or the window
+   * query genuinely answered. Anything else and the rail shows capabilities
+   * rather than a stack of panels announcing they are waiting.
+   */
+  const railLive =
+    filtered.transfers > 0 || (filtered.state !== "INDEXING" && filtered.state !== "UNAVAILABLE");
 
   const graph = buildMarketGraph(rows, assets, { limitAddresses: 12, limitAssets: 10 });
   const edges = foldEdges(rows, assets, 10);
@@ -103,20 +118,19 @@ export default async function FabricPage({
             ))}
           </ChipGroup>
 
+          {/* A count is a measurement, so it appears only where one was taken.
+              Where none was, the tape used to hold three em dashes — a row of
+              gaps that reads as a broken instrument rather than an early one.
+              It now carries the state chip alone, and the canvas below carries
+              the structure. */}
           <div className="ml-auto flex shrink-0 items-center gap-3">
-            <p className="label-s text-ink-faint">
-              {counted ? (
-                <>
-                  {integer(graph.shown.nodes)} NODES · {integer(graph.shown.edges)} EDGES ·{" "}
-                  {integer(graph.totals.transfers)} TX
-                </>
-              ) : (
-                <>
-                  <Absent /> NODES · <Absent /> EDGES · <Absent /> TX
-                </>
-              )}
-            </p>
-            {counted ? null : <StateTag state={chipState} surface="topology" />}
+            {counted ? (
+              <p className="label-s text-ink-faint">
+                {integer(graph.shown.nodes)} NODES · {integer(graph.shown.edges)} EDGES ·{" "}
+                {integer(graph.totals.transfers)} TX
+              </p>
+            ) : null}
+            {drawn ? null : <StateTag state={chipState} surface="topology" />}
           </div>
         </div>
       </div>
@@ -124,29 +138,54 @@ export default async function FabricPage({
       {/* instrument */}
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_var(--width-rail)]">
         <div className="flex min-w-0 flex-col border-b border-rule lg:min-h-0 lg:border-b-0 lg:border-r">
-          <div className="flex h-[24rem] min-h-0 shrink-0 sm:h-[30rem] lg:h-auto lg:flex-1">
-            <TopologyView
-              graph={graph}
-              state={topology}
-              emptyHint={
-                // Only claim an observed absence when the window was actually
-                // covered. Otherwise the canvas says what the surface says.
-                counted
-                  ? typeFilter
-                    ? `No ${ASSET_TYPE_LABEL[typeFilter]} transfer was observed in the ${window} window. Widen the window or clear the filter.`
-                    : `No transfer was observed in the ${window} window. The map draws itself as soon as value moves.`
-                  : undefined
-              }
-            />
+          {/* /fabric is a full-screen instrument, so the map takes the height
+              rather than sitting in a short band above empty ground. On a
+              narrow viewport it is given a fixed, generous height; from lg it
+              simply takes everything the row has left. */}
+          <div className="flex h-[28rem] min-h-0 shrink-0 sm:h-[34rem] lg:h-auto lg:flex-1">
+            <TopologyView graph={graph} state={topology} />
           </div>
-          <Legend graph={graph} window={window} state={topology} drawn={drawn} />
+          {/* The measured legend documents a measured encoding: radius as
+              observed value, edge weight as value transferred, the ring as the
+              newest indexed block. None of that is on screen while the canvas
+              is drawing the architecture preview, and the preview carries its
+              own legend for what it does draw — so this one appears only when
+              there is a real map under it. */}
+          {drawn ? <Legend graph={graph} window={window} state={topology} /> : null}
         </div>
 
-        <RailColumn revision={`${window}:${typeFilter ?? "all"}`} className="lg:!static lg:max-h-none lg:overflow-visible">
-          <div className="flex flex-col gap-px overflow-y-auto bg-rule lg:h-[calc(100dvh-var(--nav-height)-3.25rem)]">
-            <CapitalFlowModule window={window} activity={filtered} edges={edges} assets={assets} />
-            <NetworkActivityModule window={window} activity={filtered} />
-            <TopFlowsModule edges={edges} assets={assets} window={window} state={filtered.state} />
+        {/* The rail is a full-height column beside a full-height map, so
+            whatever the three modules do not fill is still on screen. Painted
+            in the rule tone it was a tall lighter rectangle with nothing in it;
+            it is page ground now, and the space is closed by a foot that says
+            what the rail reports and where it read it — true with or without a
+            single indexed transfer, and carrying no figure of its own. */}
+        <RailColumn
+          revision={`${window}:${typeFilter ?? "all"}`}
+          className="lg:!static lg:max-h-none lg:overflow-visible lg:bg-void"
+        >
+          {/* flex-1 rather than a calc() against the viewport: the column is
+              already stretched to the height of the instrument row, and a
+              hand-computed height that misses by the height of a wrapped
+              control row leaves a strip of the rail's own tone showing under
+              it. */}
+          <div className="flex flex-col gap-px overflow-y-auto bg-void lg:min-h-0 lg:flex-1">
+            {/*
+              With nothing measured, three stacked panels each saying they are
+              waiting reads as three failures rather than one system without a
+              database — and it sat beside a canvas already drawing the
+              architecture. One capability rail says it once.
+            */}
+            {railLive ? (
+              <>
+                <CapitalFlowModule window={window} activity={filtered} edges={edges} assets={assets} />
+                <NetworkActivityModule window={window} activity={filtered} />
+                <TopFlowsModule edges={edges} assets={assets} window={window} state={filtered.state} />
+              </>
+            ) : (
+              <CapabilityRail className="border-0" />
+            )}
+            <RailFoot window={window} typeFilter={typeFilter} />
           </div>
         </RailColumn>
       </div>
@@ -155,16 +194,44 @@ export default async function FabricPage({
 }
 
 /**
- * The slot where a count would be.
+ * The foot of the rail.
  *
- * An em dash, not a zero and not a faint number. It holds the shape of the tape
- * so the layout reads finished, and asserts nothing.
+ * It absorbs whatever height the three modules leave, so the bottom of the
+ * column is a designed region rather than an unexplained block of colour. What
+ * it says is structural and therefore true on an empty index: which questions
+ * this rail answers, that all three read the same window as the map beside
+ * them, and where the reading comes from. It carries no measurement — there is
+ * no number here to be right or wrong about.
  */
-function Absent() {
+function RailFoot({ window, typeFilter }: { window: FlowWindow; typeFilter: AssetType | null }) {
   return (
-    <span aria-hidden className="text-ink-dim">
-      &mdash;
-    </span>
+    /* The outer box takes the leftover height and is page ground, so the space
+       above the foot is the page rather than a painted panel. The foot itself
+       hugs its own content at the bottom of the column. */
+    <div className="flex flex-1 flex-col justify-end bg-void">
+      <div className="flex flex-col gap-2 border border-rule bg-surface px-4 py-3.5">
+        <p className="label-s text-ink-dim">THE RAIL</p>
+        <ul className="flex flex-col gap-1">
+          <Line term="CAPITAL FLOW" def="How much moved, and how fast" />
+          <Line term="NETWORK ACTIVITY" def="How many addresses, assets and pairs were involved" />
+          <Line term="TOP FLOWS" def="The strongest directed relationships, ranked" />
+        </ul>
+        <p className="label-s normal-case tracking-[0.02em] text-ink-faint">
+          All three read the same {window} window as the map
+          {typeFilter ? `, narrowed to ${ASSET_TYPE_LABEL[typeFilter]}` : ""}. Source: Robinhood Chain RPC, ERC-20
+          Transfer logs indexed by FOLDMARK.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function Line({ term, def }: { term: string; def: string }) {
+  return (
+    <li className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+      <span className="label-s shrink-0 text-ink-muted">{term}</span>
+      <span className="truncate text-body-s text-ink-faint">{def}</span>
+    </li>
   );
 }
 
@@ -212,21 +279,18 @@ function observed(state: DataState): boolean {
  * The legend is generated from the graph it describes, so it cannot document an
  * encoding the renderer does not implement.
  *
- * With nothing drawn it keeps its place and documents the encoding in the
- * abstract — position, radius, edge weight and ring are properties of the
- * renderer, true before a single node exists. What it drops in that state is
- * every count, because a count is a measurement and there is none.
+ * It is rendered only over a drawn map. Every line below either counts what is
+ * on screen or names an encoding that is actually in force, and both of those
+ * require a measured graph to be true.
  */
 function Legend({
   graph,
   window,
   state,
-  drawn,
 }: {
   graph: ReturnType<typeof buildMarketGraph>;
   window: FlowWindow;
   state: DataState;
-  drawn: boolean;
 }) {
   const assets = graph.nodes.filter((n) => n.kind === "asset").length;
   const sources = graph.nodes.filter((n) => n.kind === "source").length;
@@ -238,28 +302,22 @@ function Legend({
       <dl className="shell grid grid-cols-2 gap-x-6 gap-y-1.5 py-2.5 sm:flex sm:flex-wrap sm:items-center sm:gap-x-8 sm:gap-y-2">
         <Item
           term="POSITION"
-          def={
-            drawn
-              ? `${sources} sources left · ${assets} assets centre · ${destinations} destinations right`
-              : "Sources left · assets centre · destinations right"
-          }
+          def={`${sources} sources left · ${assets} assets centre · ${destinations} destinations right`}
         />
         <Item term="RADIUS" def="Square root of observed value moved" />
         <Item term="EDGE WEIGHT" def="Value transferred along that relationship" />
         <Item
           term="RING"
           def={
-            drawn
-              ? fresh
-                ? `${fresh} node${fresh === 1 ? "" : "s"} active in the newest indexed block`
-                : "No node active in the newest block"
-              : "Active in the newest indexed block"
+            fresh
+              ? `${fresh} node${fresh === 1 ? "" : "s"} active in the newest indexed block`
+              : "No node active in the newest block"
           }
         />
         {/* The window says its condition in the reader's terms; the machine
             word for it stays in the API and in /docs. */}
         <Item term="WINDOW" def={`${window} · ${presentLabel(state, "topology")}`} />
-        {drawn && graph.truncated ? (
+        {graph.truncated ? (
           <Item term="SHOWN" def={`${graph.shown.nodes} of ${graph.totals.addresses + graph.totals.assets} — ranked by value`} />
         ) : null}
       </dl>

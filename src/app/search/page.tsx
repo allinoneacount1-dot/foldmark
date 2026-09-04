@@ -87,7 +87,14 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
           </div>
         ) : null}
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-2">
+        {/*
+          items-start. These four panels hold wildly different amounts — twelve
+          asset rows beside an empty-state sentence — and a stretching grid pads
+          the shorter one out with its own surface tone until the row is square.
+          That padding is a coloured rectangle with nothing in it, so a panel is
+          allowed to be short.
+        */}
+        <div className="mt-8 grid items-start gap-6 lg:grid-cols-2">
           <Panel>
             <PanelHeader
               title="ASSETS"

@@ -7,7 +7,8 @@ import { Matrix, type MatrixRow } from "@/components/ui/Matrix";
 import { Ledger, LedgerRow, LedgerCell, LedgerEmpty, type LedgerColumn } from "@/components/ui/Ledger";
 import { Panel, PanelHeader, StateTag, Methodology } from "@/components/ui/primitives";
 import { ExplorerLink } from "@/components/ui/controls";
-import { MarketChart } from "@/components/charts/MarketChart";
+import { MarketChartPanel } from "@/components/charts/MarketChartPanel";
+import { ReferenceChart } from "@/components/charts/ReferenceChart";
 import { TopologyView } from "@/components/graph/TopologyView";
 import { CapitalFlowModule, NetworkActivityModule, TopFlowsModule } from "@/components/intelligence/rail";
 import { MarketPanel } from "@/components/intelligence/MarketPanel";
@@ -27,7 +28,17 @@ import {
   requestNow,
 } from "@/lib/queries";
 import { buildAssetGraph } from "@/lib/graph";
-import { measured, indexing, unavailable, withFreshness, type Measured } from "@/lib/data-state";
+import {
+  measured,
+  indexing,
+  unavailable,
+  withFreshness,
+  hasValue,
+  type DataState,
+  type Measured,
+} from "@/lib/data-state";
+import { presentMissing, type Surface } from "@/lib/presentation-state";
+import { referenceMarketFor } from "@/config/reference-markets";
 import { blockLabel, compact, integer, isAddress, relativeTime, shortAddress } from "@/lib/format";
 import { ASSET_TYPE_LABEL, CHAIN, WINDOWS, type FlowWindow } from "@/config/site";
 
@@ -35,6 +46,28 @@ export const revalidate = 30;
 
 const INDEX = { source: "FOLDMARK indexer", method: "ERC-20 Transfer logs from Robinhood Chain RPC" };
 const ORACLE = { source: "Price oracle", method: "Latest stored price observation for this asset" };
+
+/**
+ * What this passport cannot measure, and why.
+ *
+ * These were rows in the window matrix, which meant the matrix drew PRICE and
+ * LIQUIDITY as five em dashes each — a table that reads as broken rather than
+ * as a table with nothing in those rows. A metric that cannot be measured for
+ * any window is not a row with missing cells; it is a metric the product is
+ * withholding, and one sentence saying so carries strictly more than ten
+ * dashes. The labels stay on the page, which is the part a reader needs; only
+ * the empty numeric grid goes.
+ */
+const WITHHELD: ReadonlyArray<readonly [string, string]> = [
+  [
+    "PRICE",
+    `No oracle is wired to chain ${CHAIN.id}, so there is no per-window price series to fold. The market panel reports a quote the moment a venue is observed quoting this contract.`,
+  ],
+  [
+    "LIQUIDITY",
+    "Depth is read from the pool that produced a quote. No DEX pool has been identified for this contract, so there is nothing to read it from.",
+  ],
+];
 
 export async function generateMetadata({ params }: { params: Promise<{ contract: string }> }): Promise<Metadata> {
   const { contract } = await params;
@@ -55,7 +88,18 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
 
   const [indexer, activity24h] = await Promise.all([getIndexerStatus(), getWindowActivity("24H", now)]);
 
+  // The chain head is read over RPC and needs no database. It is the figure on
+  // this page that is real before anything is indexed, so it is shown as a real
+  // figure rather than folded into the same waiting state as the rest.
+  const chainHead = withFreshness(indexer.chainHead, now);
+
   if (!asset) {
+    // A contract with a confirmed underlying still has a real market to show,
+    // even when nothing about it has been indexed. Unmapped addresses get no
+    // chart: an arbitrary benchmark beside an unknown contract would invite
+    // exactly the association the mapping allowlist exists to prevent.
+    const mapped = referenceMarketFor(CHAIN.id, contract);
+
     return (
       <Shell>
         <div className="band-dense">
@@ -74,7 +118,14 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
                 Inspect on Blockscout
               </ExplorerLink>
             </div>
+            <ChainFacts head={chainHead} now={now} />
           </Panel>
+
+          {mapped ? (
+            <div className="mt-6 border border-rule bg-surface">
+              <ReferenceChart contractAddress={contract} height={340} selectable={false} />
+            </div>
+          ) : null}
         </div>
       </Shell>
     );
@@ -102,6 +153,18 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
   ]);
   const price = prices.get(asset.id);
 
+  /**
+   * Whether FOLDMARK holds an onchain price of its own for this asset.
+   *
+   * It decides which chart tab opens. With a canonical price the onchain market
+   * is what the product is for; without one the visitor lands on the reference
+   * market — a real instrument, sourced and labelled as TradingView data —
+   * rather than on an explanation of why there is no chart. The reference feed
+   * is the underlying instrument and never fills DEX SPOT, canonical price,
+   * market state, notional or liquidity; those stay with the market panel.
+   */
+  const hasOnchainSeries = Boolean(market?.canonical) || Boolean(price);
+
   const cell = (value: number | null | undefined, state: (typeof windowRows)[number]): Measured<number | string> =>
     value === null || value === undefined
       ? state.state === "UNAVAILABLE"
@@ -109,9 +172,27 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
         : indexing(INDEX)
       : measured(value, INDEX, { observedAt: indexer.updatedAt, state: state.capped ? "PARTIAL" : "OK" });
 
-  // Each row says what kind of thing is missing from it: a transfer count that
-  // has not been indexed and a price that has never been quoted are one state
-  // to the machine and two different sentences to a reader.
+  /**
+   * The passport's one mode indicator.
+   *
+   * Every cell on this page used to carry its own AWAITING / SYNCING /
+   * INDEXING caption, so a page with nothing indexed read as forty separate
+   * warnings about one fact. The fact is stated once, here, and the cells below
+   * simply hold an em dash — which is what a dash has always meant in this
+   * product: a slot with no measurement in it, never a zero.
+   */
+  const observed = windowRows.some((r) => r.rows.length > 0);
+  const answered = windowRows.every((r) => r.state !== "UNAVAILABLE");
+  const modeState: DataState = observed ? "OK" : answered ? "EMPTY" : "INDEXING";
+  const modeDetail = observed
+    ? "Every figure below is folded from indexed Transfer logs at request time. A cell holding an em dash was not observed in that window — it is never a zero."
+    : answered
+      ? `The index answered for each window and recorded no transfer of ${asset.symbol} in them. Cells hold an em dash where nothing was measured.`
+      : "Nothing has been observed for this contract yet. Cells hold an em dash until a value is measured, and nothing on this page is estimated in the meantime.";
+
+  const indexedTo = indexer.lastProcessedBlock.value;
+  const headBlock = chainHead.value;
+
   const matrixRows: MatrixRow[] = [
     {
       label: "TRANSFERS",
@@ -134,18 +215,6 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
       cells: windowRows.map((r) => cell(r.folded?.counterparties ?? (r.state === "EMPTY" ? 0 : null), r)),
       format: (v) => integer(Number(v)),
     },
-    {
-      label: "PRICE",
-      source: "No oracle wired to chain " + CHAIN.id,
-      surface: "price",
-      cells: WINDOWS.map(() => unavailable<number | string>(ORACLE)),
-    },
-    {
-      label: "LIQUIDITY",
-      source: "No DEX pool identified",
-      surface: "liquidity",
-      cells: WINDOWS.map(() => unavailable<number | string>({ source: "DEX pool registry" })),
-    },
   ];
 
   const cpColumns: LedgerColumn[] = [
@@ -162,7 +231,12 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
       <Shell>
         <div className="band-dense">
           <p className="label-s">
-            ASSET PASSPORT · CHAIN {CHAIN.id} · INDEXED TO {blockLabel(indexer.lastProcessedBlock.value)}
+            ASSET PASSPORT · CHAIN {CHAIN.id}
+            {indexedTo !== null
+              ? ` · INDEXED TO ${blockLabel(indexedTo)}`
+              : headBlock !== null
+                ? ` · CHAIN HEAD ${blockLabel(headBlock)}`
+                : ""}
           </p>
           <div className="mt-3 flex flex-wrap items-end justify-between gap-4 border-b border-rule pb-5">
             <div className="min-w-0">
@@ -176,12 +250,30 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
               {asset.verified ? <StateTag state="OK" label="VERIFIED CONTRACT" /> : <StateTag state="EMPTY" label="UNVERIFIED" />}
             </div>
           </div>
+
+          {/* The one place this page says what mode it is in. */}
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border border-rule bg-surface px-4 py-2.5">
+            <StateTag state={modeState} surface="activity" />
+            <p className="min-w-0 max-w-[74ch] text-body-s text-ink-muted">{modeDetail}</p>
+            {hasValue(chainHead) ? (
+              <p className="label-s ml-auto shrink-0 text-ink-faint">
+                CHAIN HEAD {blockLabel(chainHead.value)} · {relativeTime(chainHead.observedAt, now)}
+              </p>
+            ) : null}
+          </div>
         </div>
       </Shell>
 
       <Tape label={`${asset.symbol} status`}>
-        <TapeCell
+        {/*
+          A cell with a value prints it. A cell without one prints an em dash and
+          stops there: the state is said once, by the mode line above. No `?? 0`
+          anywhere — defaulting an absent count to zero would publish a
+          fabricated measurement, which is the one thing a tape must never do.
+        */}
+        <TapeMeasure
           label="PRICE"
+          surface="price"
           measurement={
             market?.canonical
               ? measured(
@@ -194,18 +286,33 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
                 : unavailable<number>(ORACLE)
           }
           format={(v) => `$${compact(Number(v), 4)}`}
-          surface="price"
         />
-        {/*
-          No `?? 0`. cell() already turns an absent value into INDEXING or
-          UNAVAILABLE; defaulting to zero first would walk straight past that and
-          publish a fabricated zero as a measurement, which is the one thing a
-          tape of numbers must never do.
-        */}
-        <TapeCell label="TRANSFERS 24H" surface="activity" measurement={cell(windowRows[2].folded?.transfers, windowRows[2])} format={(v) => integer(Number(v))} />
-        <TapeCell label="GROSS VOLUME 24H" surface="activity" measurement={cell(windowRows[2].folded?.volume, windowRows[2])} format={(v) => compact(Number(v))} />
-        <TapeCell label="COUNTERPARTIES 24H" surface="flow" measurement={cell(windowRows[2].folded?.counterparties, windowRows[2])} format={(v) => integer(Number(v))} />
-        <TapeCell label="INDEXED TO" surface="network" measurement={withFreshness(indexer.lastProcessedBlock, now)} format={(v) => blockLabel(Number(v))} />
+        <TapeMeasure
+          label="TRANSFERS 24H"
+          surface="activity"
+          measurement={cell(windowRows[2].folded?.transfers, windowRows[2])}
+          format={(v) => integer(Number(v))}
+        />
+        <TapeMeasure
+          label="GROSS VOLUME 24H"
+          surface="activity"
+          measurement={cell(windowRows[2].folded?.volume, windowRows[2])}
+          format={(v) => compact(Number(v))}
+        />
+        <TapeMeasure
+          label="COUNTERPARTIES 24H"
+          surface="flow"
+          measurement={cell(windowRows[2].folded?.counterparties, windowRows[2])}
+          format={(v) => integer(Number(v))}
+        />
+        {/* Real over RPC, with or without a database. */}
+        <TapeMeasure label="CHAIN HEAD" surface="network" measurement={chainHead} format={(v) => blockLabel(Number(v))} />
+        <TapeMeasure
+          label="INDEXED TO"
+          surface="network"
+          measurement={withFreshness(indexer.lastProcessedBlock, now)}
+          format={(v) => blockLabel(Number(v))}
+        />
         <TapeStatic label="DECIMALS" value={String(asset.decimals)} />
         <TapeStatic label="UPDATED" value={relativeTime(indexer.updatedAt, now)} />
       </Tape>
@@ -216,7 +323,14 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
             ratio="rail"
             gap="gap-6"
             align="stretch"
-            left={<MarketChart contract={asset.contract_address} symbol={asset.symbol} height={360} />}
+            left={
+              <MarketChartPanel
+                contract={asset.contract_address}
+                symbol={asset.symbol}
+                height={360}
+                hasOnchainSeries={hasOnchainSeries}
+              />
+            }
             right={
               <RailColumn revision={asset.id}>
                 <MarketPanel snapshot={market} symbol={asset.symbol} now={now} />
@@ -233,13 +347,30 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
         <div className="band-dense">
           <h2 className="label mb-4 border-b border-rule pb-2.5 text-ink-muted">OBSERVED ACROSS WINDOWS</h2>
           <Matrix columns={[...WINDOWS]} rows={matrixRows} caption={`${asset.symbol} metrics by observation window`} />
+
           <div className="mt-4 border border-rule">
+            <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-rule px-4 py-2.5">
+              <h3 className="label text-ink">WITHHELD FROM THIS MATRIX</h3>
+              <span className="label-s text-ink-faint">NOT MEASURABLE ON CHAIN {CHAIN.id} YET</span>
+            </header>
+            <ul className="flex flex-col">
+              {WITHHELD.map(([metric, why]) => (
+                <li
+                  key={metric}
+                  className="grid grid-cols-1 gap-x-6 gap-y-1 border-b border-rule-faint px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(9rem,1fr)_minmax(0,3fr)]"
+                >
+                  <span className="label-s text-ink-muted">{metric}</span>
+                  <span className="text-body-s text-ink-faint">{why}</span>
+                </li>
+              ))}
+            </ul>
             <Methodology>
               Each column is an independent query over that trailing window, computed at request time from indexed
               Transfer logs. GROSS VOLUME is the sum of transfer amounts in token units — it is not a net flow and not a
               dollar figure. COUNTERPARTIES counts distinct addresses that appear as sender or recipient; it is not a
               holder count, which would require reconstructing balances over the full history. Cells reading PARTIAL hit
-              the per-window row cap and are a lower bound.
+              the per-window row cap and are a lower bound. A metric listed above as withheld is one this chain cannot
+              yet support: it is named and explained rather than drawn as an empty row.
             </Methodology>
           </div>
         </div>
@@ -342,6 +473,8 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
                       ["IDENTITY", asset.source ?? "On-chain contract metadata"],
                       ["TRANSFERS", "Robinhood Chain RPC — eth_getLogs, Transfer topic"],
                       ["BLOCK TIME", "Block header timestamp, resolved per block"],
+                      ["CHAIN HEAD", "Robinhood Chain RPC — read live, independent of the index"],
+                      ["REFERENCE CHART", "TradingView — the underlying instrument, never the onchain token price"],
                       ["EXPLORER", CHAIN.explorer.replace("https://", "")],
                       ["PRICE", `No oracle wired to chain ${CHAIN.id}`],
                     ].map(([k, v]) => (
@@ -358,6 +491,69 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
         </div>
       </Shell>
     </>
+  );
+}
+
+/**
+ * One tape cell.
+ *
+ * With a value it is an ordinary TapeCell. Without one it prints an em dash and
+ * stops: the per-cell status caption is what turned a tape of unobserved cells
+ * into a row of shouting, and this page says that once instead. The sentence is
+ * kept for screen readers, where a dash on its own carries nothing.
+ */
+function TapeMeasure({
+  label,
+  measurement,
+  format,
+  surface = "generic",
+}: {
+  label: string;
+  measurement: Measured<number | string>;
+  format?: (value: number | string) => string;
+  surface?: Surface;
+}) {
+  if (hasValue(measurement)) {
+    return <TapeCell label={label} measurement={measurement} format={format} surface={surface} />;
+  }
+  return (
+    <div className="flex min-w-[9.5rem] shrink-0 flex-col justify-center gap-1 border-r border-rule py-3 pr-6 last:border-r-0 sm:min-w-[11rem]">
+      <dt className="label-s">{label}</dt>
+      <dd>
+        <span aria-hidden className="font-mono text-data leading-none text-ink-dim">
+          &mdash;
+        </span>
+        <span className="sr-only">{presentMissing(measurement.state, surface).detail}</span>
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * The chain, stated as fact.
+ *
+ * Chain name, chain id and the head block are true without a database — the
+ * head is read over RPC on every request. On a page that otherwise has nothing
+ * to report, these are the values that make the product demonstrably connected
+ * rather than merely waiting.
+ */
+function ChainFacts({ head, now }: { head: Measured<number>; now: number }) {
+  const live = hasValue(head);
+  const facts: ReadonlyArray<readonly [string, string]> = [
+    ["CHAIN", CHAIN.name],
+    ["CHAIN ID", String(CHAIN.id)],
+    ["CHAIN HEAD", live ? blockLabel(head.value) : "—"],
+    ["HEAD READ", live ? relativeTime(head.observedAt, now) : "—"],
+  ];
+  return (
+    <dl className="grid grid-cols-2 gap-px border-t border-rule bg-rule sm:grid-cols-4">
+      {facts.map(([k, v]) => (
+        <div key={k} className="flex flex-col gap-1 bg-surface px-4 py-3">
+          <dt className="label-s">{k}</dt>
+          <dd className={`tabular font-mono text-data-s ${v === "—" ? "text-ink-dim" : "text-ink"}`}>{v}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

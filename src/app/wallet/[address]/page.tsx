@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Shell, Split, PageHead } from "@/components/layout/Frame";
 import { Tape, TapeCell, TapeStatic } from "@/components/ui/Tape";
 import { Figure } from "@/components/ui/Figure";
-import { Panel, PanelHeader, EmptyState, Methodology, StateTag } from "@/components/ui/primitives";
+import { Panel, PanelHeader, Methodology, StateTag } from "@/components/ui/primitives";
 import { ChipLink, ChipGroup, ExplorerLink } from "@/components/ui/controls";
 import { Ledger, LedgerRow, LedgerCell, LedgerEmpty, type LedgerColumn } from "@/components/ui/Ledger";
 import { Histogram, MagnitudeRow, FlowBar } from "@/components/charts";
@@ -13,7 +14,17 @@ import { getAssets, getIndexerStatus, getTransfersSince, since, requestNow,
 } from "@/lib/queries";
 import { buildMarketGraph } from "@/lib/graph";
 import { measured, indexing, type Measured } from "@/lib/data-state";
-import { blockLabel, compact, fromBaseUnits, integer, isAddress, relativeTime, shortAddress, signed } from "@/lib/format";
+import {
+  blockLabel,
+  compact,
+  fromBaseUnits,
+  integer,
+  isAddress,
+  relativeTime,
+  shortAddress,
+  signed,
+  utcClock,
+} from "@/lib/format";
 import { WINDOWS, WINDOW_MS, CHAIN, ASSET_TYPE_LABEL, type FlowWindow } from "@/config/site";
 
 export const revalidate = 30;
@@ -168,27 +179,67 @@ export default async function WalletPage({
       </Shell>
 
       <Tape label="Wallet position">
-        {/* Counts, not amounts: this line summarises a wallet across assets. */}
-        <TapeCell label={`RECEIVED ${window}`} surface="wallet" measurement={m(transfersIn)} format={(v) => integer(Number(v))} />
-        <TapeCell label={`SENT ${window}`} surface="wallet" measurement={m(transfersOut)} format={(v) => integer(Number(v))} />
-        <TapeStatic label="NET FLOW" value="PER ASSET" />
-        <TapeCell label="TRANSFERS" surface="wallet" measurement={m(rows.length)} format={(v) => integer(Number(v))} />
-        <TapeCell label="COUNTERPARTIES" surface="wallet" measurement={m(counterparties.size)} format={(v) => integer(Number(v))} />
-        <TapeCell label="ASSETS TOUCHED" surface="wallet" measurement={m(exposure.size)} format={(v) => integer(Number(v))} />
-        <TapeStatic label="PORTFOLIO VALUE" value="NO ORACLE" />
-        <TapeStatic label="UPDATED" value={relativeTime(indexer.updatedAt, now)} />
+        {has ? (
+          <>
+            {/* Counts, not amounts: this line summarises a wallet across assets. */}
+            <TapeCell label={`RECEIVED ${window}`} surface="wallet" measurement={m(transfersIn)} format={(v) => integer(Number(v))} />
+            <TapeCell label={`SENT ${window}`} surface="wallet" measurement={m(transfersOut)} format={(v) => integer(Number(v))} />
+            <TapeStatic label="NET FLOW" value="PER ASSET" />
+            <TapeCell label="TRANSFERS" surface="wallet" measurement={m(rows.length)} format={(v) => integer(Number(v))} />
+            <TapeCell label="COUNTERPARTIES" surface="wallet" measurement={m(counterparties.size)} format={(v) => integer(Number(v))} />
+            <TapeCell label="ASSETS TOUCHED" surface="wallet" measurement={m(exposure.size)} format={(v) => integer(Number(v))} />
+            <TapeStatic label="PORTFOLIO VALUE" value="NO ORACLE" />
+            <TapeStatic label="UPDATED" value={relativeTime(indexer.updatedAt, now)} />
+          </>
+        ) : (
+          /**
+           * The same band, carrying what is actually known.
+           *
+           * Six cells of RECEIVED / SENT / TRANSFERS / COUNTERPARTIES with an em
+           * dash and the same waiting label under each is a row that says one
+           * thing six times. So while nothing has been folded for this address,
+           * the band carries the facts that are true anyway — the chain it is
+           * being read on, the head that chain is at, the window in force, and
+           * the two figures this product declines to produce — plus exactly one
+           * cell for the thing genuinely being waited on: the indexer's cursor.
+           */
+          <>
+            <TapeStatic label="CHAIN" value={String(CHAIN.id)} />
+            <TapeCell
+              label="CHAIN HEAD"
+              surface="network"
+              measurement={indexer.chainHead}
+              format={(v) => blockLabel(Number(v))}
+            />
+            <TapeCell
+              label="INDEXER CURSOR"
+              surface="activity"
+              measurement={indexer.lastProcessedBlock}
+              format={(v) => blockLabel(Number(v))}
+            />
+            <TapeStatic label="WINDOW" value={window} />
+            <TapeStatic label="NET FLOW" value="PER ASSET" />
+            <TapeStatic label="PORTFOLIO VALUE" value="NO ORACLE" />
+            <TapeStatic label="HEAD READ AT" value={utcClock(indexer.chainHead.observedAt)} />
+          </>
+        )}
       </Tape>
 
       <Shell>
         <div className="band-dense">
-          {has ? (
-            <Split
-              ratio="7:5"
-              gap="gap-6"
-              left={
-                <div className="flex flex-col gap-6">
-                  <Panel>
-                    <PanelHeader title="ASSET EXPOSURE" meta={window} state={transfers.state} surface="wallet" />
+          <Split
+            ratio="7:5"
+            gap="gap-6"
+            left={
+              <div className="flex flex-col gap-6">
+                <Panel>
+                  <PanelHeader
+                    title="ASSET EXPOSURE"
+                    meta={window}
+                    state={has ? transfers.state : undefined}
+                    surface="wallet"
+                  />
+                  {has ? (
                     <div className="flex flex-col">
                       {rankedExposure.map((e) => (
                         <div key={e.asset!.id} className="border-b border-rule-faint px-4 py-3 last:border-b-0">
@@ -221,27 +272,48 @@ export default async function WalletPage({
                         </div>
                       ))}
                     </div>
-                    <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
-                      Net is movement inside the window, in each asset&rsquo;s own units — never added across assets.
-                      It is not a balance: a balance requires the full transfer history for the address. Rows are
-                      ordered by transfers, the one quantity comparable between assets.
-                    </p>
-                  </Panel>
+                  ) : (
+                    /* The panel keeps its place in the layout and states what a
+                       row of it holds. Naming the fields is not a claim that any
+                       row exists — it is the difference between a surface that
+                       has not started and one that failed. */
+                    <dl className="flex flex-col">
+                      {EXPOSURE_FIELDS.map(([term, definition]) => (
+                        <div
+                          key={term}
+                          className="flex flex-col gap-1 border-b border-rule-faint px-4 py-3 last:border-b-0 sm:flex-row sm:items-baseline sm:gap-5"
+                        >
+                          <dt className="label-s shrink-0 text-ink-muted sm:w-[8.5rem]">{term}</dt>
+                          <dd className="text-body-s text-ink-faint">{definition}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                  <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
+                    Net is movement inside the window, in each asset&rsquo;s own units — never added across assets. It
+                    is not a balance: a balance requires the full transfer history for the address. Rows are ordered by
+                    transfers, the one quantity comparable between assets.
+                  </p>
+                </Panel>
 
-                  <Figure
-                    index="01"
-                    caption={`Activity timeline over ${window}, in ${Math.round(span / 24 / 60000)}-minute intervals.`}
-                    provenance="ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS"
-                  >
-                    <div className="px-4 py-5">
-                      <Histogram buckets={buckets} height={64} label={`Transfers per interval over ${window}`} />
-                    </div>
-                  </Figure>
+                <Figure
+                  index="01"
+                  caption={`Activity timeline over ${window}, in ${Math.round(span / 24 / 60000)}-minute intervals.`}
+                  provenance="ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS"
+                >
+                  <div className="px-4 py-5">
+                    {/* With no transfers the histogram draws its own baseline
+                        and nothing above it. The axis is the structure; the bars
+                        are the observation, and there is not one to draw. */}
+                    <Histogram buckets={buckets} height={64} label={`Transfers per interval over ${window}`} />
+                  </div>
+                </Figure>
 
-                  <div>
-                    <h2 className="label mb-3 border-b border-rule pb-2.5 text-ink-muted">COUNTERPARTY LEDGER</h2>
-                    <Ledger columns={cpColumns} caption={`Addresses this wallet traded against over ${window}`} minWidth={680}>
-                      {rankedCounterparties.length ? (
+                <div>
+                  <h2 className="label mb-3 border-b border-rule pb-2.5 text-ink-muted">COUNTERPARTY LEDGER</h2>
+                  <Ledger columns={cpColumns} caption={`Addresses this wallet traded against over ${window}`} minWidth={680}>
+                    {has ? (
+                      rankedCounterparties.length ? (
                         rankedCounterparties.map((c) => (
                           <LedgerRow key={c.address} columns={cpColumns} href={`/wallet/${c.address}`}>
                             <LedgerCell column={cpColumns[0]}>
@@ -278,23 +350,62 @@ export default async function WalletPage({
                         ))
                       ) : (
                         <LedgerEmpty state={transfers.state} surface="flow" />
-                      )}
-                    </Ledger>
-                  </div>
+                      )
+                    ) : (
+                      /* One designed empty state, under headers that stay. It
+                         carries the whole explanation the page used to give in a
+                         panel of its own, plus the one action a reader can take
+                         right now. */
+                      <LedgerVoid
+                        title={
+                          transfers.state === "EMPTY"
+                            ? "No counterparty in the covered window"
+                            : "Awaiting the first indexed transfer"
+                        }
+                        detail={
+                          <>
+                            The indexer has recorded no transfer involving this address inside the {window} window. It
+                            may be inactive, it may transact in assets FOLDMARK does not track yet, or the indexer may
+                            not have reached its blocks — the cursor is currently at{" "}
+                            {blockLabel(indexer.lastProcessedBlock.value)}.
+                          </>
+                        }
+                        action={
+                          <ExplorerLink address={address} explorer={CHAIN.explorer}>
+                            Check the full history on Blockscout
+                          </ExplorerLink>
+                        }
+                      />
+                    )}
+                  </Ledger>
                 </div>
-              }
-              right={
-                <div className="flex flex-col gap-6">
-                  <Figure
-                    index="02"
-                    caption={`Neighbourhood over ${window} — ${integer(graph.shown.nodes)} nodes, ${integer(graph.shown.edges)} relationships.`}
-                    provenance="ERC-20 TRANSFER LOGS INDEXED BY FOLDMARK"
-                  >
-                    <div className="flex h-[20rem] min-h-0">
-                      <TopologyView graph={graph} emptyHint="This address has no observed relationship in the window." />
-                    </div>
-                  </Figure>
+              </div>
+            }
+            right={
+              <div className="flex flex-col gap-6">
+                <Figure
+                  index="02"
+                  caption={
+                    has
+                      ? `Neighbourhood over ${window} — ${integer(graph.shown.nodes)} nodes, ${integer(graph.shown.edges)} relationships.`
+                      : `Neighbourhood over ${window} — this address at the centre of the addresses and assets one hop from it.`
+                  }
+                  provenance={has ? "ERC-20 TRANSFER LOGS INDEXED BY FOLDMARK" : "ARCHITECTURE PREVIEW · NOT AN OBSERVATION"}
+                >
+                  {/* 22rem, not 20: with no relationship to draw the topology
+                      falls back to its architecture preview, which declares a
+                      22rem floor. A shorter box let that preview push two rems
+                      past the figure's own rule. */}
+                  <div className="flex h-[22rem] min-h-0">
+                    <TopologyView
+                      graph={graph}
+                      state={transfers.state}
+                      emptyHint="This address has no observed relationship in the window."
+                    />
+                  </div>
+                </Figure>
 
+                {has ? (
                   <Panel>
                     <PanelHeader title="TOP RELATIONSHIPS" meta={window} state={transfers.state} surface="flow" />
                     <div className="px-4 py-2">
@@ -314,51 +425,101 @@ export default async function WalletPage({
                       ))}
                     </div>
                   </Panel>
+                ) : (
+                  /* The reading shell: every surface this page produces, and the
+                     single source each is read from. A field is filled from its
+                     own source or not at all — including the last one, which is
+                     filled from nothing, on purpose. */
+                  <Panel>
+                    <PanelHeader title="WHAT THIS PAGE READS" meta="FIELDS AND SOURCES" />
+                    <dl className="flex flex-col">
+                      {READS.map(([field, source]) => (
+                        <div
+                          key={field}
+                          className="flex items-baseline justify-between gap-4 border-b border-rule-faint px-4 py-2.5 last:border-b-0"
+                        >
+                          <dt className="label-s shrink-0 text-ink-muted">{field}</dt>
+                          <dd className="min-w-0 text-right text-body-s text-ink-faint">{source}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <p className="label-s border-t border-rule px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
+                      Any public address opens this page, whether or not the index has reached it.
+                    </p>
+                  </Panel>
+                )}
 
-                  <div className="border border-rule">
-                    <div className="flex items-center justify-between border-b border-rule px-4 py-2.5">
-                      <span className="label text-ink">DATA CONDITION</span>
-                      <StateTag state={transfers.state} surface="wallet" />
-                    </div>
-                    <Methodology>
-                      Every figure is folded at request time from transfers where this address appears as sender or
-                      recipient inside the {window} window. Amounts are token units at each asset&apos;s own decimals and
-                      are not summed across assets, because adding units of different tokens would be meaningless.
-                      Portfolio value in a currency is withheld while no price oracle is wired to chain {CHAIN.id}.
-                    </Methodology>
+                <div className="border border-rule">
+                  <div className="flex items-center justify-between border-b border-rule px-4 py-2.5">
+                    <span className="label text-ink">DATA CONDITION</span>
+                    {/* Said once per page. With nothing folded, the band above
+                        carries it in the one cell that is genuinely waiting. */}
+                    {has ? <StateTag state={transfers.state} surface="wallet" /> : null}
                   </div>
+                  <Methodology>
+                    Every figure is folded at request time from transfers where this address appears as sender or
+                    recipient inside the {window} window. Amounts are token units at each asset&apos;s own decimals and
+                    are not summed across assets, because adding units of different tokens would be meaningless.
+                    Portfolio value in a currency is withheld while no price oracle is wired to chain {CHAIN.id}.
+                  </Methodology>
                 </div>
-              }
-            />
-          ) : (
-            <Panel>
-              {/* The title names the region; the chip says the state in the
-                  reader's terms. "NO ACTIVITY IN WINDOW" as a title was a
-                  measurement, and while the index has not reached this address
-                  it is not one we have taken. */}
-              <PanelHeader title="OBSERVED ACTIVITY" meta={window} state={transfers.state} surface="wallet" />
-              <EmptyState
-                state={transfers.state}
-                surface="wallet"
-                detail={
-                  <>
-                    The indexer has recorded no transfer involving this address inside the {window} window. It may be
-                    inactive, it may transact in assets FOLDMARK does not track yet, or the indexer may not have reached
-                    its blocks — the cursor is currently at {blockLabel(indexer.lastProcessedBlock.value)}.
-                  </>
-                }
-                action={
-                  <div className="mt-1">
-                    <ExplorerLink address={address} explorer={CHAIN.explorer}>
-                      Check the full history on Blockscout
-                    </ExplorerLink>
-                  </div>
-                }
-              />
-            </Panel>
-          )}
+              </div>
+            }
+          />
         </div>
       </Shell>
     </>
   );
 }
+
+/* ==========================================================================
+   Absence, designed
+   ========================================================================== */
+
+/**
+ * The one empty state a ledger gets: headers intact, one sentence, and three
+ * ruled lines marking where rows will be drawn. Equal lengths, even spacing —
+ * regularity is the tell that this is stationery rather than a reading.
+ */
+function LedgerVoid({
+  title,
+  detail,
+  action,
+}: {
+  title: string;
+  detail: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-6 px-4 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <div className="min-w-0 max-w-[52ch]">
+        <p className="font-display text-[1.25rem] leading-tight tracking-[-0.02em] text-ink">{title}</p>
+        <div className="mt-2 text-body-s text-ink-muted">{detail}</div>
+        {action ? <div className="mt-3">{action}</div> : null}
+      </div>
+      <div aria-hidden className="flex w-full shrink-0 flex-col gap-3 sm:w-[14rem]">
+        <span className="block h-px w-full bg-rule" />
+        <span className="block h-px w-full bg-rule" />
+        <span className="block h-px w-full bg-rule" />
+      </div>
+    </div>
+  );
+}
+
+/** What one row of the exposure panel holds. Field names, never values. */
+const EXPOSURE_FIELDS: ReadonlyArray<readonly [string, string]> = [
+  ["ASSET", "The token contract that moved, with its type: stock token, crypto or stablecoin."],
+  ["NET", "Received minus sent inside the window, in that asset's own units at its own decimals."],
+  ["IN / OUT", "Both directions drawn around a shared centre line, so the balance of the two is readable at a glance."],
+  ["TRANSFERS", "How many transfers touched this asset — the one quantity comparable between assets."],
+];
+
+/** Every surface this page produces, and the one source each reads. */
+const READS: ReadonlyArray<readonly [string, string]> = [
+  ["COUNTERPARTIES", "transfer logs naming this address"],
+  ["ASSET EXPOSURE", "the same logs, grouped by asset"],
+  ["ACTIVITY TIMELINE", "transfer timestamps, bucketed"],
+  ["NEIGHBOURHOOD", "addresses and assets one hop away"],
+  ["PROTOCOL TOUCHPOINTS", "counterparties matched to the contract registry"],
+  ["PORTFOLIO VALUE", `withheld — no price oracle on chain ${CHAIN.id}`],
+];
