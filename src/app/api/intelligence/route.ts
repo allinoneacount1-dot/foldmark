@@ -179,8 +179,19 @@ export async function POST(req: Request) {
    * The client already holds the deterministic answer for this question and
    * shows it when nothing arrives. Sending prose here would overwrite a correct
    * static answer with an apology.
+   *
+   * The reason travels in a header. A silent 204 is indistinguishable from a
+   * missing key, a rate limit and a dead model, which makes the layer
+   * undiagnosable in production without adding logging that could capture a
+   * prompt. These reasons are classes -- `not_configured`, `network`,
+   * `upstream_429` -- and carry no credential, no prompt and no provider body.
    */
-  if (!result.ok) return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+  if (!result.ok) {
+    return new Response(null, {
+      status: 204,
+      headers: { "cache-control": "no-store", "x-foldmark-reasoning": result.reason },
+    });
+  }
 
-  return new Response(result.stream, { headers: TEXT_HEADERS });
+  return new Response(result.stream, { headers: { ...TEXT_HEADERS, "x-foldmark-reasoning": "ok" } });
 }

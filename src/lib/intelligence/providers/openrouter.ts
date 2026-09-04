@@ -195,8 +195,17 @@ export async function streamAnswer(
         max_tokens: 900,
       }),
     });
-  } catch {
-    return { ok: false, reason: "network" };
+  } catch (error) {
+    /**
+     * An abort is not a network failure and must not be reported as one.
+     *
+     * The reader navigating away cancels the request, and that is a normal
+     * ending. Filing it under `network` would make a healthy deployment look
+     * like a broken one, and would hide a genuinely unreachable provider behind
+     * the noise of ordinary cancellations.
+     */
+    const aborted = (error as { name?: string } | null)?.name === "AbortError" || Boolean(signal?.aborted);
+    return { ok: false, reason: aborted ? "aborted" : "network" };
   }
 
   if (!response.ok || !response.body) {

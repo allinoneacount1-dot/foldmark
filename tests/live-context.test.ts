@@ -411,6 +411,50 @@ describe("a provider that fails does not become an answer", () => {
     expect(res.status).toBe(204);
     expect(await res.text()).toBe("");
     expect(calls).toBeGreaterThan(0);
+    // The reason is a class, not a provider body: diagnosable without logging
+    // a prompt or leaking what the upstream said.
+    expect(res.headers.get("x-foldmark-reasoning")).toBe("upstream_502");
+  });
+
+  it("names a missing key as configuration rather than as a network fault", async () => {
+    mockStore({ transferCount: 1, assetCount: 1 });
+    const res = await POST(ask({ question: "what is a fold?", page: { pathname: "/", params: {} } }));
+    expect(res.headers.get("x-foldmark-reasoning")).toBe("not_configured");
+  });
+
+  it("distinguishes a reader who navigated away from a provider that is down", async () => {
+    process.env.OPENROUTER_API_KEY = "unused-in-this-test";
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes("openrouter")) {
+        const err = new Error("aborted");
+        err.name = "AbortError";
+        throw err;
+      }
+      return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+
+    const res = await POST(ask({ question: "what is a fold?", page: { pathname: "/", params: {} } }));
+    expect(res.status).toBe(204);
+    // A cancelled request is a normal ending. Filing it under `network` would
+    // make a healthy deployment look broken and hide real outages in the noise.
+    expect(res.headers.get("x-foldmark-reasoning")).toBe("aborted");
+  });
+
+  it("carries no reason header worth reading when the answer succeeds", async () => {
+    process.env.OPENROUTER_API_KEY = "unused-in-this-test";
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes("openrouter")) {
+        return new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n', {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+
+    const res = await POST(ask({ question: "what is a fold?", page: { pathname: "/", params: {} } }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-foldmark-reasoning")).toBe("ok");
   });
 
   it("still answers when the index is unreachable", async () => {
