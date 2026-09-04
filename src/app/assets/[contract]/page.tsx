@@ -41,6 +41,8 @@ import { presentMissing, type Surface } from "@/lib/presentation-state";
 import { referenceMarketFor } from "@/config/reference-markets";
 import { DexMarkets } from "@/components/market/DexMarkets";
 import { restAssetMarket } from "@/server/db/rest-queries";
+import { ObservedOwnership } from "@/components/market/ObservedOwnership";
+import { observedOwnership } from "@/server/ownership/balances";
 import { blockLabel, compact, integer, isAddress, relativeTime, shortAddress } from "@/lib/format";
 import { ASSET_TYPE_LABEL, CHAIN, WINDOWS, type FlowWindow } from "@/config/site";
 
@@ -93,6 +95,11 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
    * rather than each producing a request, and everyone sees the same timestamp.
    */
   const dexMarket = asset ? await restAssetMarket(asset.id) : null;
+  /**
+   * Net observed movement per address. Not balances: the index follows the head
+   * and does not reach this asset's first transfer, so the panel says so.
+   */
+  const ownership = asset ? await observedOwnership(asset.id) : null;
   const now = await requestNow();
 
   const [indexer, activity24h] = await Promise.all([getIndexerStatus(), getWindowActivity("24H", now)]);
@@ -464,6 +471,10 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
             right={
               <div className="flex flex-col gap-6">
                 {dexMarket ? <DexMarkets market={dexMarket} /> : null}
+
+                {ownership ? (
+                  <ObservedOwnership ownership={ownership} decimals={asset.decimals} symbol={asset.symbol} />
+                ) : null}
 
                 <Panel>
                   <PanelHeader title="CONTRACT" />
