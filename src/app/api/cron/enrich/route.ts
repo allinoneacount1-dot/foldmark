@@ -4,6 +4,7 @@ import { selectRows, countRows, supabaseConfigured } from "@/server/db/supabase"
 import { NETWORK_ID, PRIMARY_MARKET_METHOD } from "@/server/market/geckoterminal";
 import { CHAIN } from "@/config/site";
 import { cronAuthorized } from "@/server/cron/auth";
+import { ingestionPaused, PAUSE_REASON } from "@/server/ingest/pause";
 
 /**
  * The hosted market-enrichment endpoint.
@@ -72,6 +73,20 @@ export async function GET(req: Request) {
 
   if (!authorized(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401, headers: { "cache-control": "no-store" } });
+  }
+
+  /**
+   * Paused with ingestion, and for the same reason.
+   *
+   * Enrichment writes far less than the indexer, but it still writes, and a
+   * deployment that has stopped growing on purpose should not keep growing
+   * through a side door.
+   */
+  if (ingestionPaused()) {
+    return NextResponse.json(
+      { ok: false, paused: true, reason: PAUSE_REASON },
+      { headers: { "cache-control": "no-store" } },
+    );
   }
 
   const budget = Number(url.searchParams.get("assets") ?? 6);

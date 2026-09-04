@@ -9,6 +9,7 @@ import { SiteFooter } from "@/components/shell/SiteFooter";
 import { RouteTransition } from "@/components/shell/RouteTransition";
 import { FoldmarkIntelligence } from "@/components/intelligence-guide/FoldmarkIntelligence";
 import { SITE } from "@/config/site";
+import { IngestionNotice } from "@/components/shell/IngestionNotice";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"], display: "swap" });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"], display: "swap" });
@@ -54,6 +55,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>
           <MotionProvider>
             <SiteHeader />
+            {/*
+              Above the content, because pausing ingestion changes what every
+              figure below it means. Renders nothing when ingestion is running.
+            */}
+            <IngestionNotice />
             <main id="main" className="flex flex-1 flex-col">
               <RouteTransition>{children}</RouteTransition>
             </main>

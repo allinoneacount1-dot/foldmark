@@ -6,6 +6,7 @@ import { restCursor } from "@/server/db/rest-queries";
 import { supabaseConfigured, countRows } from "@/server/db/supabase";
 import { cronAuthorized } from "@/server/cron/auth";
 import { databaseSize } from "@/server/db/storage";
+import { ingestionPaused, PAUSE_REASON } from "@/server/ingest/pause";
 
 /**
  * The hosted ingestion endpoint.
@@ -34,7 +35,20 @@ const authorized = cronAuthorized;
  * are generous relative to the quarter-hourly cadence, so an ordinary delayed
  * schedule does not read as a failure.
  */
-export function ingestionHealth(lastSuccessAt: string | null, lagBlocks: number | null): "HEALTHY" | "DEGRADED" | "STALE" {
+export function ingestionHealth(
+  lastSuccessAt: string | null,
+  lagBlocks: number | null,
+  paused = false,
+): "HEALTHY" | "DEGRADED" | "STALE" | "PAUSED" {
+  /**
+   * PAUSED outranks everything, because it explains everything below it.
+   *
+   * A paused index stops advancing and would otherwise age into STALE within
+   * the hour — reporting a fault where someone made a decision, and sending
+   * whoever reads it looking for a bug that is not there. The two states are
+   * distinguishable only if the product is told which one it is in.
+   */
+  if (paused) return "PAUSED";
   if (!lastSuccessAt) return "STALE";
   const ageMs = Date.now() - Date.parse(lastSuccessAt);
   if (!Number.isFinite(ageMs)) return "STALE";
@@ -77,7 +91,14 @@ async function status() {
      * stalled pipeline goes unnoticed. This reads the age of the last committed
      * pass instead.
      */
-    health: ingestionHealth(cursor.updatedAt, lag),
+    health: ingestionHealth(cursor.updatedAt, lag, ingestionPaused()),
+    /**
+     * Stated as its own field as well as folded into health, because a
+     * consumer reading `health` alone must not have to infer the difference
+     * between a decision and a fault.
+     */
+    ingestion_mode: ingestionPaused() ? "PAUSED" : "HEAD_FOLLOWING",
+    ingestion_note: ingestionPaused() ? PAUSE_REASON : null,
     /**
      * Stated rather than implied. This deployment follows the head within a
      * bounded budget; it does not claim the blocks behind the cursor are
@@ -128,6 +149,18 @@ export async function GET(req: Request) {
 
   if (action === "repair-verification") {
     return NextResponse.json(await repairVerification(), { headers: { "cache-control": "no-store" } });
+  }
+
+  /**
+   * A paused deployment does no work and says so, rather than refusing with an
+   * error. The scheduler may keep calling; this costs one cheap response and
+   * spends no provider quota and no storage.
+   */
+  if (ingestionPaused()) {
+    return NextResponse.json(
+      { ok: false, paused: true, reason: PAUSE_REASON },
+      { headers: { "cache-control": "no-store" } },
+    );
   }
 
   // Default action: one ingestion pass.
