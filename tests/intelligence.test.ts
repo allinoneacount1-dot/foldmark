@@ -281,6 +281,33 @@ describe("page context", () => {
     expect(text).toContain("DEX");
   });
 
+  it("calls a passport a passport, not the index it sits under", () => {
+    // `/assets/0x…` matches the `/assets` prefix first, and a reader in front
+    // of one asset was told they were viewing "the asset index".
+    const page: PageContext = {
+      pathname: "/assets/0xaf3d76f1834a1d425780943c99ea8a608f8a93f9",
+      params: {},
+    };
+    const text = describeContext(page);
+    expect(text).toContain("an asset passport");
+    expect(text).not.toContain("the asset index");
+    // The address is still reported verbatim and still not given an identity.
+    expect(text).toContain("0xaf3d76f1834a1d425780943c99ea8a608f8a93f9");
+    expect(text).toMatch(/does not claim what kind of participant it is/);
+  });
+
+  it("still calls the index the index", () => {
+    expect(describeContext({ pathname: "/assets", params: {} })).toContain("the asset index");
+  });
+
+  it("calls one address an address rather than the wallets list", () => {
+    const text = describeContext({
+      pathname: "/wallets/0x8366a39cc670b4001a1121b8f6a443a643e40951",
+      params: {},
+    });
+    expect(text).toContain("one address and its observed relationships");
+  });
+
   it("says no filters are set rather than claiming everything is shown", () => {
     // On a surface with nothing measured those are very different claims.
     const text = describeFilters({ pathname: "/fabric", params: {} });

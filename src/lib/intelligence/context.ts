@@ -55,6 +55,19 @@ export function routeFacts(page: PageContext): RouteFacts {
   const hit =
     SURFACES.find((s) => path === s.prefix || path.startsWith(`${s.prefix}/`)) ?? null;
 
+  /**
+   * A passport is not the index it lives under.
+   *
+   * `/assets/0x…` matches `/assets` first, so a reader on one asset was told
+   * they were viewing "the asset index and asset passports". The guide's first
+   * job is to say correctly what is on the screen, and a plural surface name in
+   * front of a single asset gets that wrong immediately. Same for `/wallets`.
+   */
+  const plural = hit?.prefix === "/assets" || hit?.prefix === "/wallets";
+  const singular = plural
+    ? (SURFACES.find((s) => s.prefix === hit!.prefix.replace(/s$/, "")) ?? null)
+    : null;
+
   const rawWindow = page.params.w ?? "";
   const window = (WINDOWS as readonly string[]).includes(rawWindow) ? (rawWindow as FlowWindow) : null;
   const rawType = page.params.type ?? "";
@@ -66,16 +79,19 @@ export function routeFacts(page: PageContext): RouteFacts {
   const last = segments[segments.length - 1] ?? "";
   const subject = /^0x[a-fA-F0-9]{40}$/.test(last) ? last.toLowerCase() : null;
 
+  // An address in the path is what turns an index route into a detail route.
+  const surface = subject && singular ? singular : hit;
+
   return {
-    surface: hit?.surface ?? "Overview",
-    purpose: hit?.purpose ?? "the FOLDMARK overview",
-    route: hit?.prefix ?? "/",
+    surface: surface?.surface ?? "Overview",
+    purpose: surface?.purpose ?? "the FOLDMARK overview",
+    route: surface?.prefix ?? "/",
     window,
     flow: parseFlowClass(page.params.flow),
     category: parseCategory(page.params.category),
     assetType,
     subject,
-    domain: hit?.domain ?? "core",
+    domain: surface?.domain ?? "core",
   };
 }
 
