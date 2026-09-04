@@ -17,12 +17,20 @@ export function SiteFooter() {
           {FOOTER_NAV.map((group) => (
             <nav key={group.group} aria-label={group.group}>
               <h2 className="label-s border-b border-rule pb-2.5">{group.group}</h2>
-              <ul className="mt-3 flex flex-col gap-2.5">
+              {/*
+                The link is padded rather than the list item, and the gap is
+                reduced by the same amount. A 17px line of text is a legal
+                target only by WCAG's spacing exception, which is a technicality
+                on a phone: the reader still has to hit a seventeen-pixel band.
+                Padding raises the real target past 24px while the visual rhythm
+                between rows is unchanged.
+              */}
+              <ul className="mt-2 flex flex-col gap-0.5">
                 {group.links.map((link) => (
                   <li key={link.href}>
                     <Link
                       href={link.href}
-                      className="text-body-s text-ink-muted underline-offset-4 m-fast hover:text-ink hover:underline"
+                      className="inline-block py-1 text-body-s text-ink-muted underline-offset-4 m-fast hover:text-ink hover:underline"
                     >
                       {link.label}
                     </Link>

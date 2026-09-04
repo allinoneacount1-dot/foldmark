@@ -34,8 +34,18 @@ const INDEX = { source: "FOLDMARK indexer", method: "ERC-20 Transfer logs involv
 
 export async function generateMetadata({ params }: { params: Promise<{ address: string }> }): Promise<Metadata> {
   const { address } = await params;
+  /**
+   * The 404 is decided here, before the body streams.
+   *
+   * Calling notFound() from the component alone rendered the not-found UI with
+   * a 200 status: by the time it ran, the response had already been committed.
+   * A page that says NOT FOUND while answering 200 is one a crawler indexes and
+   * a client caches as real. Metadata resolves before the body, so the status
+   * set here is the one that ships.
+   */
+  if (!isAddress(address)) notFound();
   return {
-    title: isAddress(address) ? `${shortAddress(address, 8, 6)} — wallet` : "Invalid address",
+    title: `${shortAddress(address, 8, 6)} — wallet`,
     description: `Observed activity, exposure and counterparties for ${address} on ${CHAIN.name}.`,
   };
 }

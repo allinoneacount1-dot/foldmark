@@ -54,6 +54,15 @@ const ORACLE = { source: "Price oracle", method: "Latest stored price observatio
 
 export async function generateMetadata({ params }: { params: Promise<{ contract: string }> }): Promise<Metadata> {
   const { contract } = await params;
+  /**
+   * A malformed address is a 404, and it is decided here so the status ships
+   * with the response rather than after the body has already committed a 200.
+   *
+   * A well-formed contract that is simply not indexed is NOT a 404. That page
+   * is a real answer — the contract may exist on chain and FOLDMARK has not
+   * reached it — and it says exactly that.
+   */
+  if (!isAddress(contract)) notFound();
   const asset = await getAssetByAddress(contract);
   if (!asset) return { title: "Asset not indexed" };
   return {
