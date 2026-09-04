@@ -1,0 +1,57 @@
+name: FOLDMARK ingestion heartbeat
+
+# The production heartbeat.
+#
+# FOLDMARK's index advances because this scheduler calls the hosted ingestion
+# endpoint. Nothing here runs on a developer machine: GitHub schedules it,
+# Vercel executes the pass, Supabase stores the result. No laptop needs to be
+# switched on for the chain index to move.
+#
+# The pass itself is idempotent and cursor-guarded, so a duplicated or
+# overlapping run cannot double-count a transfer or step over a range that
+# failed.
+
+on:
+  schedule:
+    # Every five minutes, the shortest interval GitHub honours. Actual firing
+    # drifts under load, which the ingestion pass tolerates: it reads the cursor
+    # each time and works from wherever the chain actually is.
+    - cron: "*/5 * * * *"
+  # So a pass can be triggered by hand without waiting for the schedule.
+  workflow_dispatch:
+
+# A slow pass must not overlap the next tick and spend the provider budget twice.
+concurrency:
+  group: foldmark-ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Advance the chain index
+        env:
+          INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
+          ENDPOINT: https://foldmark-iota.vercel.app/api/cron/ingest
+        run: |
+          set -euo pipefail
+
+          # The secret travels as a header, never in the URL, so it cannot end up
+          # in a proxy log or a referrer.
+          response=$(curl -sS --max-time 120 -w '\n%{http_code}' \
+            -H "Authorization: Bearer ${INGEST_SECRET}" \
+            "${ENDPOINT}?action=ingest&blocks=400")
+
+          body=$(printf '%s' "$response" | sed '$d')
+          code=$(printf '%s' "$response" | tail -n1)
+
+          echo "HTTP ${code}"
+          echo "$body"
+
+          # A non-2xx means the pass did not commit. Failing loudly here is the
+          # point: a silent red run is how an index stops moving unnoticed.
+          if [ "$code" != "200" ]; then
+            echo "::error::ingestion pass did not complete"
+            exit 1
+          fi

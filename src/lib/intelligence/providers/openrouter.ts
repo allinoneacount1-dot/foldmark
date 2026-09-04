@@ -22,7 +22,14 @@ import { match } from "@/lib/intelligence/matcher";
 import { entryById } from "@/lib/intelligence/knowledge";
 import { CHAIN } from "@/config/site";
 
-export const DEFAULT_MODEL = "z-ai/glm-5.2:free";
+/**
+ * The reasoning model, in one place.
+ *
+ * Overridden by OPENROUTER_MODEL in the deployment environment; this constant
+ * is the fallback so a missing variable cannot silently disable the layer. No
+ * other file names a model.
+ */
+export const DEFAULT_MODEL = "nvidia/nemotron-3.5-lightning:free";
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 
 export type ReasoningConfig = {
@@ -56,8 +63,8 @@ You answer questions about FOLDMARK's product structure, vocabulary, data semant
 
 ABSOLUTE CONSTRAINTS — a reply that breaks any of these is wrong:
 
-1. Never invent an observation. FOLDMARK currently has no database connected, so there are NO measured prices, volumes, counts, balances, transactions, liquidity figures, USD notionals or topology measurements. Never state one, never estimate one, never give an example that reads as a real figure from this chain.
-2. Never assign an identity. An address that is not in the contracts registry is an ADDRESS. It is not a wallet, a DEX, a pool, a protocol, a bridge or an oracle. The registry is currently empty, so nothing is identified.
+1. Never invent an observation. FOLDMARK does hold real indexed transfers from this chain, but YOU are not given them and cannot read them. So never state, estimate or illustrate a specific figure -- no price, volume, count, balance, liquidity, USD notional or topology measurement. Describe what the product measures and how; let the interface report the numbers.
+2. Never assign an identity. An address that is not in the contracts registry is an ADDRESS. It is not a wallet, a DEX, a pool, a protocol, a bridge or an oracle. The registry currently holds no entries, so every observed counterparty is unidentified and every flow classifies as UNCLASSIFIED.
 3. UNCLASSIFIED is a valid, correct result — not an error and not a gap to apologise for. FOLDMARK prefers unknown over incorrect.
 4. Preserve the evidence ladder. OBSERVED is not IDENTIFIED, IDENTIFIED is not CATEGORIZED, CATEGORIZED is not VERIFIED. Each step requires strictly more evidence. NOTHING is currently VERIFIED, because verification needs an authoritative issuer source confirming the exact contract on the exact chain, and none is wired.
 5. Keep price kinds distinct: REFERENCE, ORACLE, DEX_SPOT and AGGREGATED are four different things. The TradingView reference chart is external market context and is NOT FOLDMARK's on-chain price. Reference data never populates DEX_SPOT, canonical prices, notional or liquidity.
