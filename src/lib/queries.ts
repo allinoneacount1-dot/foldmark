@@ -18,6 +18,22 @@ import { WINDOW_MS, type FlowWindow, type AssetType } from "@/config/site";
 import { fromBaseUnits } from "@/lib/format";
 import { type DataState, type Measured, indexing, measured, unavailable } from "@/lib/data-state";
 import type { Movement } from "@/lib/notional";
+/**
+ * The fallback read path.
+ *
+ * The production database is reachable over PostgREST but not over a direct
+ * Postgres connection, so every read below tries SQL first and falls back to
+ * REST rather than reporting UNAVAILABLE over a database that plainly has rows
+ * in it. SQL stays the primary path for whenever a DATABASE_URL exists.
+ */
+import {
+  restAvailable,
+  restAssets,
+  restAssetByAddress,
+  restTransfersSince,
+  restContracts,
+  restIndexCoverage,
+} from "@/server/db/rest-queries";
 
 const RPC = { source: "Robinhood Chain RPC", method: "eth_blockNumber on chain 4663" };
 const DB = {
@@ -191,21 +207,24 @@ function toAssetRow(r: Record<string, unknown>): AssetRow {
 
 export async function getAssets(): Promise<{ state: DataState; rows: AssetRow[] }> {
   const client = db();
-  if (!client) return { state: "UNAVAILABLE", rows: [] };
+  if (!client) return restAvailable() ? restAssets() : { state: "UNAVAILABLE", rows: [] };
   const data = await client`
     select id, contract_address, symbol, name, asset_type, verified, decimals, source
       from assets
      where chain_id = ${ROBINHOOD_CHAIN.id}
      order by symbol
   `.catch(() => null);
-  if (!data) return { state: "UNAVAILABLE", rows: [] };
+  // A failed SQL read falls through to REST rather than reporting UNAVAILABLE
+  // over a database that has rows in it. A stale connection string must not be
+  // able to disable a source that is working.
+  if (!data) return restAvailable() ? restAssets() : { state: "UNAVAILABLE", rows: [] };
   const rows = data.map(toAssetRow);
   return { state: rows.length ? "OK" : "INDEXING", rows };
 }
 
 export async function getAssetByAddress(contract: string): Promise<AssetRow | null> {
   const client = db();
-  if (!client) return null;
+  if (!client) return restAvailable() ? restAssetByAddress(contract) : null;
   const data = await client`
     select id, contract_address, symbol, name, asset_type, verified, decimals, source
       from assets
@@ -261,7 +280,9 @@ export async function getTransfersSince(
   opts: { assetId?: string; address?: string; limit?: number } = {},
 ): Promise<{ state: DataState; rows: TransferRow[]; capped: boolean }> {
   const client = db();
-  if (!client) return { state: "UNAVAILABLE", rows: [], capped: false };
+  if (!client) {
+    return restAvailable() ? restTransfersSince(isoSince, opts) : { state: "UNAVAILABLE", rows: [], capped: false };
+  }
   const limit = opts.limit ?? ROW_CAP;
   const assetId = opts.assetId ?? null;
   const address = opts.address ? opts.address.toLowerCase() : null;
@@ -313,7 +334,9 @@ export async function getTransfersSince(
   };
 
   const data = await read().catch(() => null);
-  if (!data) return { state: "UNAVAILABLE", rows: [], capped: false };
+  if (!data) {
+    return restAvailable() ? restTransfersSince(isoSince, opts) : { state: "UNAVAILABLE", rows: [], capped: false };
+  }
   const rows = data.map(toTransferRow);
   const capped = rows.length >= limit;
   return { state: rows.length ? (capped ? "PARTIAL" : "OK") : "EMPTY", rows, capped };
@@ -371,7 +394,9 @@ const COVERAGE_UNKNOWN: IndexCoverage = {
 
 export async function getIndexCoverage(now: number): Promise<IndexCoverage> {
   const client = db();
-  if (!client) return { ...COVERAGE_UNKNOWN, state: "UNAVAILABLE" };
+  if (!client) {
+    return restAvailable() ? restIndexCoverage() : { ...COVERAGE_UNKNOWN, state: "UNAVAILABLE" };
+  }
 
   const rows = await client`
     select earliest_indexed_block, earliest_indexed_at, continuous_since, gap_blocks, last_gap_at
@@ -383,7 +408,7 @@ export async function getIndexCoverage(now: number): Promise<IndexCoverage> {
   // A deployment whose migration has not run reports INDEXING rather than
   // claiming full coverage it cannot prove.
   const data = rows?.[0];
-  if (!data) return COVERAGE_UNKNOWN;
+  if (!data) return restAvailable() ? restIndexCoverage() : COVERAGE_UNKNOWN;
 
   const continuousSince = iso(data.continuous_since);
   const parsed = continuousSince ? Date.parse(continuousSince) : NaN;
@@ -898,12 +923,12 @@ export type ContractRow = {
 
 export async function getContracts(): Promise<{ state: DataState; rows: ContractRow[] }> {
   const client = db();
-  if (!client) return { state: "UNAVAILABLE", rows: [] };
+  if (!client) return restAvailable() ? restContracts() : { state: "UNAVAILABLE", rows: [] };
   const data = await client`
     select address, protocol_id, contract_type, verified
       from contracts
   `.catch(() => null);
-  if (!data) return { state: "UNAVAILABLE", rows: [] };
+  if (!data) return restAvailable() ? restContracts() : { state: "UNAVAILABLE", rows: [] };
   const rows = data.map((r) => ({
     address: r.address as string,
     protocol_id: (r.protocol_id as string | null) ?? null,
