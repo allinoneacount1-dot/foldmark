@@ -7,6 +7,9 @@ import {
   parseFlowClass,
   parseCategory,
   categoryOf,
+  edgeCategory,
+  filterByCategory,
+  countByCategory,
   FLOW_CLASSES,
   PROTOCOL_CATEGORIES,
   type ContractIndex,
@@ -157,6 +160,59 @@ describe("a query string cannot produce a false empty page", () => {
     expect(parseCategory("lending")).toBe("LENDING");
     expect(parseCategory("wat")).toBeNull();
     expect(parseCategory(null)).toBeNull();
+  });
+});
+
+describe("category filtering selects on the counterparty, not the shape of a row", () => {
+  const edges = [
+    { from: WALLET_A, to: POOL },      // DEX
+    { from: LEND, to: WALLET_A },      // LENDING
+    { from: WALLET_A, to: BRIDGE },    // BRIDGE
+    { from: WALLET_A, to: WALLET_B },  // nothing identified
+  ];
+
+  it("names the category of the identified end", () => {
+    expect(edgeCategory({ from: WALLET_A, to: POOL }, registry)).toBe("DEX");
+    expect(edgeCategory({ from: LEND, to: WALLET_A }, registry)).toBe("LENDING");
+  });
+
+  it("prefers the receiving end when both ends are identified", () => {
+    // Where value went is the counterparty a reader filtering for LENDING wants.
+    expect(edgeCategory({ from: POOL, to: LEND }, registry)).toBe("LENDING");
+  });
+
+  it("calls an edge between two unidentified addresses UNCLASSIFIED", () => {
+    expect(edgeCategory({ from: WALLET_A, to: WALLET_B }, registry)).toBe("UNCLASSIFIED");
+  });
+
+  it("makes every edge UNCLASSIFIED when the registry is empty", () => {
+    // The live state. No category chip may select anything on a chain nobody
+    // has classified, and UNCLASSIFIED must select all of it.
+    for (const e of edges) expect(edgeCategory(e, empty)).toBe("UNCLASSIFIED");
+    expect(filterByCategory(edges, empty, "DEX")).toHaveLength(0);
+    expect(filterByCategory(edges, empty, "UNCLASSIFIED")).toHaveLength(4);
+  });
+
+  it("keeps only the selected category, and everything with no filter", () => {
+    expect(filterByCategory(edges, registry, "DEX")).toHaveLength(1);
+    expect(filterByCategory(edges, registry, "BRIDGE")).toHaveLength(1);
+    expect(filterByCategory(edges, registry, null)).toHaveLength(4);
+  });
+
+  it("counts every category, including the empty ones", () => {
+    const counts = countByCategory(edges, registry);
+    expect(counts.DEX).toBe(1);
+    expect(counts.LENDING).toBe(1);
+    expect(counts.BRIDGE).toBe(1);
+    expect(counts.UNCLASSIFIED).toBe(1);
+    expect(counts.ORACLE).toBe(0);
+    for (const c of PROTOCOL_CATEGORIES) expect(counts[c]).toBeGreaterThanOrEqual(0);
+  });
+
+  it("adds up to the whole set, so no edge is lost or double counted", () => {
+    const counts = countByCategory(edges, registry);
+    const total = PROTOCOL_CATEGORIES.reduce((sum, c) => sum + counts[c], 0);
+    expect(total).toBe(edges.length);
   });
 });
 

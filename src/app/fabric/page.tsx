@@ -9,8 +9,19 @@ import {
   TopFlowsModule,
   CapabilityRail,
 } from "@/components/intelligence/rail";
-import { getAssets, getWindowActivity, foldEdges, requestNow, type WindowActivity,
+import { getAssets, getWindowActivity, getContracts, foldEdges, requestNow, type WindowActivity,
 } from "@/lib/queries";
+import {
+  FLOW_CLASSES,
+  PROTOCOL_CATEGORIES,
+  parseFlowClass,
+  parseCategory,
+  buildContractIndex,
+  filterByFlowClass,
+  filterByCategory,
+  countByFlowClass,
+  countByCategory,
+} from "@/lib/flow-classification";
 import { buildMarketGraph } from "@/lib/graph";
 import { integer } from "@/lib/format";
 import type { DataState } from "@/lib/data-state";
@@ -32,21 +43,51 @@ export const revalidate = 30;
 export default async function FabricPage({
   searchParams,
 }: {
-  searchParams: Promise<{ w?: string; type?: string }>;
+  searchParams: Promise<{ w?: string; type?: string; category?: string; flow?: string }>;
 }) {
   const params = await searchParams;
   const window: FlowWindow = (WINDOWS as readonly string[]).includes(params.w ?? "") ? (params.w as FlowWindow) : "24H";
   const typeFilter = (ASSET_TYPES as readonly string[]).includes(params.type ?? "") ? (params.type as AssetType) : null;
 
+  /**
+   * Filter state lives in the URL, so a view is shareable, survives a reload
+   * and renders the same on the server. An unrecognised value parses to null
+   * and reads as ALL: a stale query string must never produce an empty map
+   * that looks like a measurement of nothing.
+   */
+  const categoryFilter = parseCategory(params.category);
+  const flowFilter = parseFlowClass(params.flow);
+
   const now = await requestNow();
-  const [assetsResult, activity] = await Promise.all([getAssets(), getWindowActivity(window, now)]);
+  const [assetsResult, activity, contractsResult] = await Promise.all([
+    getAssets(),
+    getWindowActivity(window, now),
+    getContracts(),
+  ]);
 
   const assets = typeFilter ? assetsResult.rows.filter((a) => a.asset_type === typeFilter) : assetsResult.rows;
   const allowed = new Set(assets.map((a) => a.id));
-  const rows = typeFilter ? activity.rows.filter((r) => r.asset_id && allowed.has(r.asset_id)) : activity.rows;
+  const byType = typeFilter ? activity.rows.filter((r) => r.asset_id && allowed.has(r.asset_id)) : activity.rows;
+
+  /**
+   * The map, the counters and the rail all read the SAME filtered transfers.
+   *
+   * A chip that redrew the canvas while the totals beside it stayed global
+   * would be worse than a dead chip: a working control reporting a number that
+   * does not describe what is on screen. Classification comes from the
+   * contracts registry, so with no registry every transfer is UNCLASSIFIED and
+   * the category chips select nothing — which is the honest outcome, not a
+   * bug to paper over.
+   */
+  const contracts = buildContractIndex(contractsResult.rows);
+  const classifiable = byType.map((r) => ({ ...r, from: r.from_address, to: r.to_address }));
+  const flowCounts = countByFlowClass(classifiable, contracts);
+  const categoryCounts = countByCategory(classifiable, contracts);
+  const rows = filterByCategory(filterByFlowClass(classifiable, contracts, flowFilter), contracts, categoryFilter);
 
   // Recount against the filtered rows so the rail can never contradict the tape.
-  const filtered: WindowActivity = typeFilter ? recount(activity, rows, now) : activity;
+  const narrowed = typeFilter !== null || flowFilter !== null || categoryFilter !== null;
+  const filtered: WindowActivity = narrowed ? recount(activity, rows, now) : activity;
 
   /**
    * Whether the rail has anything measured to report.
@@ -81,11 +122,18 @@ export default async function FabricPage({
    */
   const chipState: DataState = topology === "UNAVAILABLE" ? "INDEXING" : topology;
 
-  const href = (next: Partial<{ w: string; type: string | undefined }>) => {
+  /** Every control keeps the others, so filters compose instead of resetting. */
+  const href = (
+    next: Partial<{ w: string; type: string | undefined; category: string | undefined; flow: string | undefined }>,
+  ) => {
     const sp = new URLSearchParams();
     sp.set("w", next.w ?? window);
     const t = "type" in next ? next.type : (typeFilter ?? undefined);
     if (t) sp.set("type", t);
+    const c = "category" in next ? next.category : (categoryFilter ?? undefined);
+    if (c) sp.set("category", c.toLowerCase());
+    const f = "flow" in next ? next.flow : (flowFilter ?? undefined);
+    if (f) sp.set("flow", f.toLowerCase());
     return `/fabric?${sp.toString()}`;
   };
 
@@ -106,6 +154,39 @@ export default async function FabricPage({
             {ASSET_TYPES.map((t) => (
               <ChipLink key={t} href={href({ type: t })} active={typeFilter === t}>
                 {ASSET_TYPE_LABEL[t]}
+              </ChipLink>
+            ))}
+          </ChipGroup>
+
+          <ChipGroup label="Category">
+            <ChipLink href={href({ category: undefined })} active={!categoryFilter} count={classifiable.length}>
+              ALL
+            </ChipLink>
+            {PROTOCOL_CATEGORIES.map((c) => (
+              <ChipLink
+                key={c}
+                // Clicking the active chip again clears it.
+                href={href({ category: categoryFilter === c ? undefined : c })}
+                active={categoryFilter === c}
+                count={categoryCounts[c]}
+              >
+                {c}
+              </ChipLink>
+            ))}
+          </ChipGroup>
+
+          <ChipGroup label="Flow">
+            <ChipLink href={href({ flow: undefined })} active={!flowFilter} count={classifiable.length}>
+              ALL
+            </ChipLink>
+            {FLOW_CLASSES.map((c) => (
+              <ChipLink
+                key={c}
+                href={href({ flow: flowFilter === c ? undefined : c })}
+                active={flowFilter === c}
+                count={flowCounts[c]}
+              >
+                {c}
               </ChipLink>
             ))}
           </ChipGroup>
@@ -164,7 +245,7 @@ export default async function FabricPage({
             on /flows.
           */}
           <div className="flex h-[28rem] min-h-0 shrink-0 sm:h-[34rem] lg:h-auto lg:flex-1">
-            <TopologyView graph={graph} state={topology} />
+            <TopologyView graph={graph} contracts={contractsResult.rows} state={topology} />
           </div>
           {/* The measured legend documents a measured encoding: radius as
               observed value, edge weight as value transferred, the ring as the
@@ -182,7 +263,7 @@ export default async function FabricPage({
             what the rail reports and where it read it — true with or without a
             single indexed transfer, and carrying no figure of its own. */}
         <RailColumn
-          revision={`${window}:${typeFilter ?? "all"}`}
+          revision={`${window}:${typeFilter ?? "all"}:${categoryFilter ?? "all"}:${flowFilter ?? "all"}`}
           className="lg:!static lg:max-h-none lg:overflow-visible lg:bg-void"
         >
           {/* flex-1 rather than a calc() against the viewport: the column is

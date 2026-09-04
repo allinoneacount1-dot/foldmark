@@ -18,7 +18,7 @@
  *
  * 1. Nothing here is denominated. No price, no amount, no percentage, no
  *    volume. Node weight drives a radius; edge intensity drives a stroke.
- * 2. Nothing here names a real thing. Nodes are ASSET A and WALLET CLUSTER,
+ * 2. Nothing here names a real thing. Nodes are ASSET A and WALLET,
  *    never a symbol, a contract address or a protocol.
  * 3. Nothing here can reach the machine. A test walks the import graph and
  *    fails if an API route, the database layer, the indexer or the market-data
@@ -107,11 +107,11 @@ export function previewTopology(key = "foldmark"): PreviewTopology {
     { id: "a2", label: "ASSET B", kind: "asset", x: 0.52, y: 0.56, weight: 0.78 },
     { id: "a3", label: "ASSET C", kind: "asset", x: 0.46, y: 0.82, weight: 0.5 },
 
-    { id: "w1", label: "WALLET CLUSTER", kind: "wallet", x: 0.14, y: 0.2, weight: 0.62 },
-    { id: "w2", label: "WALLET CLUSTER", kind: "wallet", x: 0.1, y: 0.46, weight: 0.44 },
-    { id: "w3", label: "WALLET CLUSTER", kind: "wallet", x: 0.16, y: 0.72, weight: 0.55 },
-    { id: "w4", label: "WALLET CLUSTER", kind: "wallet", x: 0.24, y: 0.9, weight: 0.32 },
-    { id: "w5", label: "WALLET CLUSTER", kind: "wallet", x: 0.2, y: 0.05, weight: 0.28 },
+    { id: "w1", label: "WALLET", kind: "wallet", x: 0.14, y: 0.2, weight: 0.62 },
+    { id: "w2", label: "WALLET", kind: "wallet", x: 0.1, y: 0.46, weight: 0.44 },
+    { id: "w3", label: "WALLET", kind: "wallet", x: 0.16, y: 0.72, weight: 0.55 },
+    { id: "w4", label: "WALLET", kind: "wallet", x: 0.24, y: 0.9, weight: 0.32 },
+    { id: "w5", label: "WALLET", kind: "wallet", x: 0.2, y: 0.05, weight: 0.28 },
 
     { id: "m1", label: "MARKET", kind: "market", x: 0.86, y: 0.34, weight: 0.8 },
     { id: "m2", label: "LIQUIDITY", kind: "market", x: 0.9, y: 0.66, weight: 0.6 },

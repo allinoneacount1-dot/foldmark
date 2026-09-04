@@ -91,7 +91,10 @@ describe("preview data carries nothing that could pass as a measurement", () => 
     }
     // Every label is a category.
     for (const n of t.nodes) {
-      expect(n.label).toMatch(/^(ASSET [A-Z]|WALLET CLUSTER|MARKET|LIQUIDITY|PROTOCOL)$/);
+      // WALLET, not WALLET CLUSTER: FOLDMARK does not implement clustering, and
+      // a preview that drew one would be previewing a capability that does not
+      // exist rather than the structure that does.
+      expect(n.label).toMatch(/^(ASSET [A-Z]|WALLET|MARKET|LIQUIDITY|PROTOCOL)$/);
     }
   });
 

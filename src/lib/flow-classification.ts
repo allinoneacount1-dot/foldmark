@@ -180,3 +180,43 @@ export function countByFlowClass(edges: ClassifiableEdge[], contracts: ContractI
   for (const e of edges) counts[classifyEdge(e, contracts)] += 1;
   return counts;
 }
+
+/**
+ * Which category of counterparty an edge touched.
+ *
+ * An edge belongs to a category because one of its two ends is a contract the
+ * registry has identified — never because of what the other end looks like. An
+ * edge between two unidentified addresses is UNCLASSIFIED, which is a real
+ * answer rather than the absence of one.
+ *
+ * Where both ends are identified the receiving end wins, because that is the
+ * counterparty the value went to and the one a reader filtering for "LENDING"
+ * is looking for.
+ */
+export function edgeCategory(edge: ClassifiableEdge, contracts: ContractIndex): ProtocolCategory {
+  const to = contracts.get(edge.to.toLowerCase()) ?? null;
+  if (to) return categoryOf(to);
+  const from = contracts.get(edge.from.toLowerCase()) ?? null;
+  if (from) return categoryOf(from);
+  return "UNCLASSIFIED";
+}
+
+/** Keep only the edges touching an active category. Null means keep all. */
+export function filterByCategory<T extends ClassifiableEdge>(
+  edges: T[],
+  contracts: ContractIndex,
+  active: ProtocolCategory | null,
+): T[] {
+  if (!active) return edges;
+  return edges.filter((e) => edgeCategory(e, contracts) === active);
+}
+
+/** How many edges touch each category, for chip counts. */
+export function countByCategory(
+  edges: ClassifiableEdge[],
+  contracts: ContractIndex,
+): Record<ProtocolCategory, number> {
+  const counts = Object.fromEntries(PROTOCOL_CATEGORIES.map((c) => [c, 0])) as Record<ProtocolCategory, number>;
+  for (const e of edges) counts[edgeCategory(e, contracts)] += 1;
+  return counts;
+}
