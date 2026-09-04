@@ -22,6 +22,7 @@ import { ASSETS_ENTRIES } from "@/content/intelligence/assets";
 import { WALLETS_ENTRIES } from "@/content/intelligence/wallets";
 import { PROTOCOLS_ENTRIES } from "@/content/intelligence/protocols";
 import { PRICING_ENTRIES } from "@/content/intelligence/pricing";
+import { MARKET_ENTRIES } from "@/content/intelligence/markets";
 import { DATA_ENTRIES } from "@/content/intelligence/data";
 import { METHODOLOGY_ENTRIES } from "@/content/intelligence/methodology";
 import { NAVIGATION_ENTRIES } from "@/content/intelligence/navigation";
@@ -38,6 +39,7 @@ export const ALL_ENTRIES: Entry[] = [
   ...WALLETS_ENTRIES,
   ...PROTOCOLS_ENTRIES,
   ...PRICING_ENTRIES,
+  ...MARKET_ENTRIES,
   ...DATA_ENTRIES,
   ...METHODOLOGY_ENTRIES,
   ...NAVIGATION_ENTRIES,
