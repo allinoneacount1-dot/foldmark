@@ -104,10 +104,19 @@ export async function liveContext(pathname: string, params: Record<string, strin
   );
   const market = (meta?.[0]?.metadata_json as { market?: Record<string, unknown> } | undefined)?.market;
 
+  /**
+   * Three answers, kept apart.
+   *
+   * "Nobody asked" and "the provider was asked and had none" are different
+   * facts, and collapsing them into one absence is how a product manufactures a
+   * finding out of its own idleness.
+   */
   if (!market) {
     ctx.market_status = "unchecked — no market provider lookup has been recorded for this contract";
-  } else if (market.mapping_status !== "MATCHED") {
+  } else if (market.mapping_status === "NO_MATCH") {
     ctx.market_status = "no market — the provider was asked about this exact contract and reported no pools";
+  } else if (market.mapping_status !== "MATCHED") {
+    ctx.market_status = "unchecked — the recorded lookup did not complete, so no market state is claimed";
   } else {
     const primary = market.primary as Record<string, unknown> | null;
     const list = Array.isArray(market.markets) ? market.markets : [];

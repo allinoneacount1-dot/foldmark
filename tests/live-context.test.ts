@@ -198,7 +198,7 @@ describe("market state distinguishes not-asked from asked-and-empty", () => {
       transferCount: 10,
       assetCount: 1,
       asset: ASSET_ROW,
-      metadata: { metadata_json: { market: { mapping_status: "NO_MARKET" } }, observed_at: "2026-09-05T04:00:00Z" },
+      metadata: { metadata_json: { market: { mapping_status: "NO_MATCH" } }, observed_at: "2026-09-05T04:00:00Z" },
       prices: [],
     });
     const ctx = await liveContext(`/asset/${AAPL}`, {});

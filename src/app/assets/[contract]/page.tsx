@@ -11,9 +11,6 @@ import { MarketChartPanel } from "@/components/charts/MarketChartPanel";
 import { ReferenceChart } from "@/components/charts/ReferenceChart";
 import { TopologyView } from "@/components/graph/TopologyView";
 import { CapitalFlowModule, NetworkActivityModule, TopFlowsModule } from "@/components/intelligence/rail";
-import { MarketPanel } from "@/components/intelligence/MarketPanel";
-import { getMarketSnapshot } from "@/server/market-data";
-import { markViewed } from "@/server/market-data/scheduler";
 import {
   getAssetByAddress,
   getIndexerStatus,
@@ -46,34 +43,13 @@ import { observedOwnership } from "@/server/ownership/balances";
 import { PriceHistoryPanel } from "@/components/market/PriceHistoryPanel";
 import { priceHistory, assetNotional } from "@/server/market/historical";
 import { blockLabel, compact, integer, isAddress, relativeTime, shortAddress } from "@/lib/format";
+import { withheldMetrics } from "@/lib/market-copy";
 import { ASSET_TYPE_LABEL, CHAIN, WINDOWS, type FlowWindow } from "@/config/site";
 
 export const revalidate = 30;
 
 const INDEX = { source: "FOLDMARK indexer", method: "ERC-20 Transfer logs from Robinhood Chain RPC" };
 const ORACLE = { source: "Price oracle", method: "Latest stored price observation for this asset" };
-
-/**
- * What this passport cannot measure, and why.
- *
- * These were rows in the window matrix, which meant the matrix drew PRICE and
- * LIQUIDITY as five em dashes each — a table that reads as broken rather than
- * as a table with nothing in those rows. A metric that cannot be measured for
- * any window is not a row with missing cells; it is a metric the product is
- * withholding, and one sentence saying so carries strictly more than ten
- * dashes. The labels stay on the page, which is the part a reader needs; only
- * the empty numeric grid goes.
- */
-const WITHHELD: ReadonlyArray<readonly [string, string]> = [
-  [
-    "PRICE",
-    `No oracle is wired to chain ${CHAIN.id}, so there is no per-window price series to fold. The market panel reports a quote the moment a venue is observed quoting this contract.`,
-  ],
-  [
-    "LIQUIDITY",
-    "Depth is read from the pool that produced a quote. No DEX pool has been identified for this contract, so there is nothing to read it from.",
-  ],
-];
 
 export async function generateMetadata({ params }: { params: Promise<{ contract: string }> }): Promise<Metadata> {
   const { contract } = await params;
@@ -170,26 +146,22 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
   const graph = buildAssetGraph(window7d.rows, asset, { limit: 7 });
   const counterparties = foldByAddress(window7d.rows, [asset], 12);
   const edges = foldEdges(window7d.rows, [asset], 8);
-  // Viewing an asset promotes it to the fastest refresh tier for the next few
-  // minutes: the free quota is spent where someone is actually looking.
-  markViewed(asset.contract_address);
-  const [prices, market] = await Promise.all([
-    getLatestPrices([asset.id]),
-    getMarketSnapshot(asset.contract_address),
-  ]);
+  // The latest persisted observation. Reading a page never calls a provider, so
+  // a hundred readers cost nothing and all of them see the same timestamp.
+  const prices = await getLatestPrices([asset.id]);
   const price = prices.get(asset.id);
 
   /**
    * Whether FOLDMARK holds an onchain price of its own for this asset.
    *
-   * It decides which chart tab opens. With a canonical price the onchain market
-   * is what the product is for; without one the visitor lands on the reference
-   * market — a real instrument, sourced and labelled as TradingView data —
-   * rather than on an explanation of why there is no chart. The reference feed
-   * is the underlying instrument and never fills DEX SPOT, canonical price,
-   * market state, notional or liquidity; those stay with the market panel.
+   * It decides which chart tab opens. With a price of our own the onchain
+   * market is what the product is for; without one the visitor lands on the
+   * reference market — a real instrument, sourced and labelled as TradingView
+   * data — rather than on an explanation of why there is no chart. The
+   * reference feed is the underlying instrument and never fills DEX SPOT,
+   * canonical price, market state, notional or liquidity.
    */
-  const hasOnchainSeries = Boolean(market?.canonical) || Boolean(price);
+  const hasOnchainSeries = Boolean(price) || dexMarket?.status === "MATCHED";
 
   const cell = (value: number | null | undefined, state: (typeof windowRows)[number]): Measured<number | string> =>
     value === null || value === undefined
@@ -301,14 +273,14 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
           label="PRICE"
           surface="price"
           measurement={
-            market?.canonical
-              ? measured(
-                  market.canonical.price,
-                  { source: `${market.canonical.source} · ${market.canonical.priceType.replace("_", " ").toLowerCase()}` },
-                  { observedAt: market.canonical.observedAt },
-                )
-              : price
-                ? measured(price.price, { source: price.source }, { observedAt: price.observedAt })
+            price
+              ? measured(price.price, { source: price.source }, { observedAt: price.observedAt })
+              : dexMarket?.primary
+                ? measured(
+                    dexMarket.primary.priceUsd,
+                    { source: `${dexMarket.provider ?? "provider"} · dex spot · pool ${dexMarket.primary.pairAddress}` },
+                    { observedAt: dexMarket.observedAt ?? undefined },
+                  )
                 : unavailable<number>(ORACLE)
           }
           format={(v) => `$${compact(Number(v), 4)}`}
@@ -359,7 +331,16 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
             }
             right={
               <RailColumn revision={asset.id}>
-                <MarketPanel snapshot={market} symbol={asset.symbol} now={now} />
+                {/*
+                  One market voice, beside the chart it belongs to.
+
+                  This slot held a panel fed by a second, older market pipeline
+                  that has no coverage on this chain and therefore announced
+                  that no venue quoted the contract — while the observed pools
+                  were listed further down the same page. The second pipeline is
+                  gone rather than hidden, and the real observation stands here.
+                */}
+                {dexMarket ? <DexMarkets market={dexMarket} /> : null}
                 <CapitalFlowModule window="7D" activity={{ ...activity24h, ...deriveActivity(window7d, now) }} edges={edges} assets={[asset]} />
                 <NetworkActivityModule window="7D" activity={{ ...activity24h, ...deriveActivity(window7d, now) }} />
                 <TopFlowsModule edges={edges} assets={[asset]} window="7D" state={window7d.state} />
@@ -377,10 +358,10 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
           <div className="mt-4 border border-rule">
             <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-rule px-4 py-2.5">
               <h3 className="label text-ink">WITHHELD FROM THIS MATRIX</h3>
-              <span className="label-s text-ink-faint">NOT MEASURABLE ON CHAIN {CHAIN.id} YET</span>
+              <span className="label-s text-ink-faint">NOT A PER-WINDOW MEASURE</span>
             </header>
             <ul className="flex flex-col">
-              {WITHHELD.map(([metric, why]) => (
+              {withheldMetrics(history?.points.length ?? 0, dexMarket?.markets.length ?? 0).map(([metric, why]) => (
                 <li
                   key={metric}
                   className="grid grid-cols-1 gap-x-6 gap-y-1 border-b border-rule-faint px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(9rem,1fr)_minmax(0,3fr)]"
@@ -395,8 +376,8 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
               Transfer logs. GROSS VOLUME is the sum of transfer amounts in token units — it is not a net flow and not a
               dollar figure. COUNTERPARTIES counts distinct addresses that appear as sender or recipient; it is not a
               holder count, which would require reconstructing balances over the full history. Cells reading PARTIAL hit
-              the per-window row cap and are a lower bound. A metric listed above as withheld is one this chain cannot
-              yet support: it is named and explained rather than drawn as an empty row.
+              the per-window row cap and are a lower bound. A metric listed above is one that does not fold into a
+              trailing window — it is named and explained rather than drawn as a row of dashes.
             </Methodology>
           </div>
         </div>
@@ -480,8 +461,6 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
             }
             right={
               <div className="flex flex-col gap-6">
-                {dexMarket ? <DexMarkets market={dexMarket} /> : null}
-
                 {history ? (
                   <PriceHistoryPanel history={history} coverage={notionalCoverage} symbol={asset.symbol} />
                 ) : null}

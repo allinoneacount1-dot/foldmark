@@ -1,18 +1,31 @@
 import { NextResponse } from "next/server";
-import { getMarketSnapshot, requiredAttribution } from "@/server/market-data";
 import { getAssetByAddress } from "@/lib/queries";
+import { restAssetMarket } from "@/server/db/rest-queries";
+import { priceHistory } from "@/server/market/historical";
 import { isAddress } from "@/lib/format";
 import { CHAIN } from "@/config/site";
-import { LIQUIDITY_BASIS_LABEL, LIQUIDITY_BASIS_NOTE } from "@/server/market-data/types";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Market state for one contract, with every source that informed it.
+ * Market state for one contract, from FOLDMARK's own observations.
  *
- * The response carries the disagreement rather than hiding it: a canonical
- * price, the observations behind it, and a divergence block when sources are
- * further apart than their depth justifies.
+ * This route used to read a second, older market pipeline that has no coverage
+ * on this chain. The result was an API that contradicted itself: /v1/assets
+ * reported a DEX_SPOT price and a pool for a contract while /v1/market reported
+ * that no source had returned a usable quote for the same contract in the same
+ * second. Both cannot be true, and a consumer had no way to tell which to
+ * believe. There is now one pipeline — the persisted enrichment observations —
+ * and both endpoints read it.
+ *
+ * The three answers stay distinct, because collapsing them is how absence gets
+ * manufactured:
+ *
+ *   UNCHECKED  nobody has asked the provider about this contract yet.
+ *   NO_MARKET  the provider was asked about this EXACT contract and had none.
+ *   MATCHED    pools holding this exact contract were returned.
+ *
+ * "We have not looked" is not "there is nothing there".
  */
 export async function GET(_: Request, { params }: { params: Promise<{ contract: string }> }) {
   const { contract } = await params;
@@ -24,98 +37,104 @@ export async function GET(_: Request, { params }: { params: Promise<{ contract: 
     );
   }
 
-  const [asset, snapshot] = await Promise.all([getAssetByAddress(contract), getMarketSnapshot(contract)]);
+  const asset = await getAssetByAddress(contract);
+  const assetBlock = asset ? { symbol: asset.symbol, name: asset.name, decimals: asset.decimals } : null;
 
-  if (!snapshot || !snapshot.canonical) {
+  /**
+   * An unindexed contract has no market state of ours to report, and saying
+   * "no market" about it would be a claim we never tested.
+   */
+  if (!asset) {
     return NextResponse.json({
       contract: contract.toLowerCase(),
       chain_id: CHAIN.id,
-      asset: asset ? { symbol: asset.symbol, name: asset.name, decimals: asset.decimals } : null,
-      price: { state: "DATA UNAVAILABLE", reason: "No source returned a usable quote for this contract" },
-      observations: [],
-      attribution: requiredAttribution(),
+      asset: null,
+      market_status: "UNCHECKED",
+      reason: "This contract is not in FOLDMARK's asset registry, so no market lookup has been performed for it.",
+      price: null,
+      markets: [],
+      observations: 0,
+      attribution: [],
       updated_at: new Date().toISOString(),
-      methodology: snapshot?.methodology ?? "No market source is wired for this contract.",
     });
   }
 
-  const c = snapshot.canonical;
+  const [market, history] = await Promise.all([restAssetMarket(asset.id), priceHistory(asset.id, 1)]);
+
+  const base = {
+    contract: asset.contract_address,
+    chain_id: CHAIN.id,
+    asset: assetBlock,
+    /**
+     * Stated on every response. A market listing is a venue quoting an address;
+     * it is not an issuer confirming what that address is, and the two are
+     * routinely confused into a verification badge.
+     */
+    verified: asset.verified,
+    verification_note:
+      "A listed market means a venue quotes this contract. It is not verification: that needs an authoritative issuer source confirming this exact contract on this exact chain.",
+    attribution: market.provider ? [`Data by ${market.provider}`] : [],
+    updated_at: new Date().toISOString(),
+  };
+
+  if (market.status !== "MATCHED" || !market.primary) {
+    return NextResponse.json({
+      ...base,
+      market_status: market.status === "NO_MATCH" ? "NO_MARKET" : "UNCHECKED",
+      reason:
+        market.status === "NO_MATCH"
+          ? `${market.provider ?? "The market provider"} was asked for pools holding this exact contract and reported none. That is an answer about this address, not about its ticker.`
+          : "No market provider lookup has been recorded for this contract yet. This is not a report that no market exists.",
+      price: null,
+      markets: [],
+      observations: history.points.length,
+    });
+  }
+
+  const p = market.primary;
+
   return NextResponse.json({
-    contract: snapshot.contractAddress,
-    chain_id: snapshot.chainId,
-    asset: asset ? { symbol: asset.symbol, name: asset.name, decimals: asset.decimals } : null,
+    ...base,
+    market_status: "MATCHED",
     price: {
-      value: c.price,
-      currency: c.currency,
+      value: p.priceUsd,
+      currency: "USD",
       /**
-       * What this number is. DEX_SPOT is the last trade price at one venue, not
-       * a consolidated market price and not a settlement or reference rate.
+       * DEX_SPOT is the price printed at one pool. It is not a consolidated
+       * market price, a settlement price, or a reference rate.
        */
-      price_type: c.priceType,
-      source: c.source,
-      /** The venue that printed it, so the quote can be traced to a market. */
-      venue: c.dexId,
-      pair_address: c.pairAddress,
-      /**
-       * Three distinct times. observed_at is when the market was true,
-       * fetched_at is when our call completed, persisted_at is when a row was
-       * written. Collapsing them is how a product invents history.
-       */
-      observed_at: c.observedAt,
-      fetched_at: c.fetchedAt,
-      provider_timestamp: c.providerTimestamp,
-      persisted_at: null,
-      cache_state: c.cacheState,
-      freshness: c.freshness,
-      freshness_ms: Date.now() - new Date(c.observedAt).getTime(),
-      liquidity_usd: c.liquidityUsd,
-      liquidity_basis: c.liquidityBasis,
-      liquidity_label: c.liquidityBasis ? LIQUIDITY_BASIS_LABEL[c.liquidityBasis] : null,
-      liquidity_note: c.liquidityBasis ? LIQUIDITY_BASIS_NOTE[c.liquidityBasis] : null,
-      /**
-       * Observation quality from depth and age. It is NOT a prediction, a
-       * probability, or a score of how likely the price is to hold.
-       */
-      observation_quality: c.confidence,
+      price_type: "DEX_SPOT",
+      venue: p.venue,
+      pair: p.pairName,
+      pair_address: p.pairAddress,
+      /** Which token of the pair this contract is. Reading the wrong side reports the other token's price. */
+      side: p.side,
+      liquidity_usd: p.liquidityUsd,
+      volume_24h_usd: p.volume24hUsd,
+      observed_at: market.observedAt,
+      /** How the featured pool was chosen, so it is never read as a consensus. */
+      selection: "deepest reserve among pools holding this exact contract — a selection, never an average across venues",
     },
-    observations: snapshot.observations.map((o) => ({
-      price: o.price,
-      price_type: o.priceType,
-      source: o.source,
-      venue: o.dexId,
-      pair_address: o.pairAddress,
-      liquidity_usd: o.liquidityUsd,
-      liquidity_basis: o.liquidityBasis,
-      liquidity_label: o.liquidityBasis ? LIQUIDITY_BASIS_LABEL[o.liquidityBasis] : null,
-      observation_quality: o.confidence,
-      freshness: o.freshness,
-      observed_at: o.observedAt,
-      fetched_at: o.fetchedAt,
-      cache_state: o.cacheState,
+    /** Every pool, listed rather than summed: depth in one market does not make another deep. */
+    markets: market.markets.map((m) => ({
+      venue: m.venue,
+      pair: m.pairName,
+      pair_address: m.pairAddress,
+      price_usd: m.priceUsd,
+      side: m.side,
+      liquidity_usd: m.liquidityUsd,
+      volume_24h_usd: m.volume24hUsd,
     })),
-    /** How to read the fields above, so a consumer cannot mistake one for another. */
+    observations: history.points.length,
     field_semantics: {
       price_type:
-        "DEX_SPOT is the last price printed at one venue. It is not a consolidated market price, a settlement price, or a reference rate.",
-      observation_quality:
-        "0..1, derived from observed depth and the age of the quote. It describes how well the observation is supported, not how likely the price is to hold. Nothing here predicts.",
-      liquidity_basis:
-        "PAIR_RESERVE is the reserve of the pair that produced the quote. TOKEN_TOTAL_RESERVE is the token's reserve across every pool the provider knows about, which is an upper bound and not the depth behind this quote.",
-      times:
-        "observed_at is when the market was true; fetched_at is when our network call completed; persisted_at is when a row was written, and is null on a read because a read does not write history.",
-      cache_state:
-        "MISS and REFRESHED mean a network call happened. FRESH, COALESCED and STALE_WHILE_REVALIDATE mean this value was already held — such a value is served but never recorded as a new observation.",
+        "DEX_SPOT is the price printed at one pool at one moment. It is not a consolidated market price, a settlement price, or a reference rate, and it never comes from the reference chart.",
+      side: "base or quote — which token of the pair this contract is. The price reported is this contract's side of it.",
+      liquidity_usd:
+        "The reserve of the pool that produced this quote, as the provider reported it. Pools are never summed: depth in one market does not make another market deep.",
+      volume_24h_usd: "Trading activity at that pool. It is not capital inflow and is never folded into a flow figure.",
+      observed_at: "When the market was true, as reported by the provider — not when this response was built.",
+      observations: "How many DEX_SPOT observations FOLDMARK has persisted for this asset, which bounds any price history.",
     },
-    divergence: snapshot.divergence
-      ? {
-          spread_pct: snapshot.divergence.spreadPct,
-          highest: { price: snapshot.divergence.highest.price, source: snapshot.divergence.highest.source },
-          lowest: { price: snapshot.divergence.lowest.price, source: snapshot.divergence.lowest.source },
-          note: "A spread between venues is an observation, not an arbitrage claim. Execution and depth are not modelled.",
-        }
-      : null,
-    attribution: requiredAttribution(),
-    updated_at: new Date().toISOString(),
-    methodology: snapshot.methodology,
   });
 }
