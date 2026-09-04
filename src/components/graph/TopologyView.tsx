@@ -99,7 +99,7 @@ export function TopologyView({
 /** Mirrors TopologyCanvas, so the preview and the measured graph read as one map. */
 const PREVIEW_PALETTE = {
   void: "#080A08",
-  ruleFaint: "rgba(242,240,232,0.05)",
+  ruleFaint: "rgba(242,240,232,0.10)",
   ink: "#F2F0E8",
   inkMuted: "#A8ADA4",
   inkFaint: "#5C6259",
@@ -107,8 +107,8 @@ const PREVIEW_PALETTE = {
 } as const;
 
 const PADDING = { x: 88, y: 34 };
-const R_MIN = 3;
-const R_MAX = 11;
+const R_MIN = 4;
+const R_MAX = 13;
 
 /** One initialization sweep, then the canvas is still. Nothing here loops. */
 const INTRO_MS = 1100;
@@ -398,8 +398,11 @@ function PreviewCanvas({
           ctx.lineWidth = 1.4;
         } else {
           ctx.strokeStyle = PREVIEW_PALETTE.ink;
-          ctx.globalAlpha = Math.min(dim(e.source), dim(e.target)) * (0.14 + e.intensity * 0.34) * entered;
-          ctx.lineWidth = 0.6 + e.intensity * 1.1;
+          // Presentation contrast only. Intensity still drives the ramp; the
+          // floor is raised so the structure is legible at a glance rather than
+          // a suggestion of one. No value changed, only how visible it is.
+          ctx.globalAlpha = Math.min(dim(e.source), dim(e.target)) * (0.3 + e.intensity * 0.42) * entered;
+          ctx.lineWidth = 0.9 + e.intensity * 1.25;
         }
         ctx.stroke();
         ctx.globalAlpha = 1;
@@ -429,7 +432,7 @@ function PreviewCanvas({
           ctx.fillStyle = PREVIEW_PALETTE.void;
           ctx.fill();
           ctx.strokeStyle = isActive ? PREVIEW_PALETTE.signal : PREVIEW_PALETTE.inkMuted;
-          ctx.lineWidth = isActive ? 1.6 : 1;
+          ctx.lineWidth = isActive ? 1.6 : 1.25;
           ctx.stroke();
         }
 
@@ -455,7 +458,7 @@ function PreviewCanvas({
           ? PREVIEW_PALETTE.ink
           : n.kind === "asset"
             ? PREVIEW_PALETTE.inkMuted
-            : PREVIEW_PALETTE.inkFaint;
+            : PREVIEW_PALETTE.inkMuted;
 
         if (n.kind === "wallet") {
           ctx.textAlign = "right";

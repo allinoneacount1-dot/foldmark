@@ -82,13 +82,24 @@ export type BenchmarkMarket = { tradingViewSymbol: string; displayName: string; 
  * The visitor sees a working instrument and the caption says exactly which
  * market it is, so nothing is implied about the token beside it.
  */
+/**
+ * Every entry here must be renderable by the EMBEDDED widget specifically.
+ *
+ * That is a narrower set than TradingView's site. Index symbols such as
+ * NASDAQ:NDX and SP:SPX resolve on tradingview.com and answer
+ * "This symbol doesn't exist." inside the embed, which is worse than an empty
+ * chart: the product looks broken and blames itself for something that is
+ * merely unavailable. A benchmark is only listed once it has been seen drawing
+ * candles in the embed.
+ *
+ * COINBASE:ETHUSD leads because it is a continuously traded venue pair — it
+ * paints candles at any hour, including when every equity market is closed.
+ */
 export const BENCHMARK_MARKETS: BenchmarkMarket[] = [
-  { tradingViewSymbol: "NASDAQ:NDX", displayName: "Nasdaq 100", market: "NASDAQ" },
-  { tradingViewSymbol: "SP:SPX", displayName: "S&P 500", market: "S&P" },
-  { tradingViewSymbol: "NASDAQ:NVDA", displayName: "NVIDIA", market: "NASDAQ" },
+  { tradingViewSymbol: "COINBASE:ETHUSD", displayName: "Ether", market: "COINBASE" },
   { tradingViewSymbol: "NASDAQ:AAPL", displayName: "Apple", market: "NASDAQ" },
+  { tradingViewSymbol: "NASDAQ:NVDA", displayName: "NVIDIA", market: "NASDAQ" },
   { tradingViewSymbol: "NASDAQ:TSLA", displayName: "Tesla", market: "NASDAQ" },
-  { tradingViewSymbol: "CRYPTO:ETHUSD", displayName: "Ether", market: "CRYPTO" },
 ];
 
 export const DEFAULT_BENCHMARK = BENCHMARK_MARKETS[0];

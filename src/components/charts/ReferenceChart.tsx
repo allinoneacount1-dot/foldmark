@@ -52,7 +52,7 @@ type Props = {
 
 const WIDGET_SRC = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
 
-export function ReferenceChart({ contractAddress, height = 420, selectable = true, className = "" }: Props) {
+export function ReferenceChart({ contractAddress, height = 420, selectable = false, className = "" }: Props) {
   const mapped = referenceMarketFor(CHAIN.id, contractAddress ?? null);
 
   // A mapped asset charts its own underlying and offers no selector — the
@@ -112,7 +112,10 @@ export function ReferenceChart({ contractAddress, height = 420, selectable = tru
     script.innerHTML = JSON.stringify({
       autosize: true,
       symbol: active.symbol,
-      interval: "60",
+      // One-minute candles: the chart has to be visibly a live market the
+      // instant it paints, and an hourly series on a quiet afternoon looks
+      // static enough to read as broken.
+      interval: "1",
       timezone: "Etc/UTC",
       // Matched to FOLDMARK's own surfaces so the widget sits in the page
       // rather than on top of it.

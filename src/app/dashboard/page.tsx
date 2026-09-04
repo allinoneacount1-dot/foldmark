@@ -418,7 +418,15 @@ export default async function DashboardPage({
                 </>
               )
             }
-            provenance="ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS INDEXED BY FOLDMARK"
+            /* Crediting indexed Transfer logs while the canvas draws a generic
+               architecture preview would attribute invented geometry to a
+               measurement — an invented citation, which is the same error as an
+               invented number. */
+            provenance={
+              graph.nodes.length > 0
+                ? "ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS INDEXED BY FOLDMARK"
+                : "PRODUCT ARCHITECTURE PREVIEW · NOT AN OBSERVATION"
+            }
             aside={
               <Link href="/fabric" className="label text-ink-muted m-fast hover:text-ink">
                 FULL TOPOLOGY →
@@ -429,11 +437,28 @@ export default async function DashboardPage({
               <TopologyView graph={graph} state={activity.state} />
             </div>
           </Figure>
+          {/*
+            The methodology describes an encoding. While the preview is drawn
+            that encoding is not in force — radius is not observed value and
+            edge weight is not value transferred — so describing it would
+            explain a measurement that is not on screen.
+          */}
           <Methodology>
-            Position encodes role: net senders on the left, assets on the centre line, net receivers on the right. Node
-            radius is the square root of observed value moved, edge weight is value transferred along that edge. A ring
-            marks a node that moved value in the most recent indexed block. Nothing is placed randomly and no node exists
-            without an observed transfer behind it.
+            {graph.nodes.length > 0 ? (
+              <>
+                Position encodes role: net senders on the left, assets on the centre line, net receivers on the right.
+                Node radius is the square root of observed value moved, edge weight is value transferred along that
+                edge. A ring marks a node that moved value in the most recent indexed block. Nothing is placed randomly
+                and no node exists without an observed transfer behind it.
+              </>
+            ) : (
+              <>
+                No transfer has been observed yet, so this is the product&rsquo;s architecture rather than a
+                measurement: the lanes a real map is read in — sources left, assets on the centre line, destinations
+                right — with category placeholders in them. No radius, edge or position here carries a value. The moment
+                a transfer is indexed the same canvas draws the observed graph instead.
+              </>
+            )}
           </Methodology>
         </div>
       </Shell>

@@ -130,7 +130,14 @@ export default async function FabricPage({
                 {integer(graph.totals.transfers)} TX
               </p>
             ) : null}
-            {drawn ? null : <StateTag state={chipState} surface="topology" />}
+            {/*
+              No state chip over the preview. The canvas carries its own
+              ARCHITECTURE PREVIEW badge, and a second label saying the
+              structure is initializing contradicted the structure already on
+              screen. The chip returns only when a measured map is drawn and
+              something about it is worth qualifying.
+            */}
+            {drawn && chipState !== "OK" ? <StateTag state={chipState} surface="topology" /> : null}
           </div>
         </div>
       </div>
@@ -185,7 +192,7 @@ export default async function FabricPage({
             ) : (
               <CapabilityRail className="border-0" />
             )}
-            <RailFoot window={window} typeFilter={typeFilter} />
+            <RailFoot window={window} typeFilter={typeFilter} measured={drawn} />
           </div>
         </RailColumn>
       </div>
@@ -203,7 +210,16 @@ export default async function FabricPage({
  * them, and where the reading comes from. It carries no measurement — there is
  * no number here to be right or wrong about.
  */
-function RailFoot({ window, typeFilter }: { window: FlowWindow; typeFilter: AssetType | null }) {
+function RailFoot({
+  window,
+  typeFilter,
+  measured,
+}: {
+  window: FlowWindow;
+  typeFilter: AssetType | null;
+  /** True when a measured graph is on screen. Decides what may be claimed. */
+  measured: boolean;
+}) {
   return (
     /* The outer box takes the leftover height and is page ground, so the space
        above the foot is the page rather than a painted panel. The foot itself
@@ -216,11 +232,23 @@ function RailFoot({ window, typeFilter }: { window: FlowWindow; typeFilter: Asse
           <Line term="NETWORK ACTIVITY" def="How many addresses, assets and pairs were involved" />
           <Line term="TOP FLOWS" def="The strongest directed relationships, ranked" />
         </ul>
-        <p className="label-s normal-case tracking-[0.02em] text-ink-faint">
-          All three read the same {window} window as the map
-          {typeFilter ? `, narrowed to ${ASSET_TYPE_LABEL[typeFilter]}` : ""}. Source: Robinhood Chain RPC, ERC-20
-          Transfer logs indexed by FOLDMARK.
-        </p>
+        {/*
+          Provenance follows what is on screen. Crediting indexed Transfer logs
+          while the canvas draws a generic architecture preview would attribute
+          invented geometry to a measurement — the same error as printing an
+          invented number, wearing a citation.
+        */}
+        {measured ? (
+          <p className="label-s normal-case tracking-[0.02em] text-ink-faint">
+            All three read the same {window} window as the map
+            {typeFilter ? `, narrowed to ${ASSET_TYPE_LABEL[typeFilter]}` : ""}. Source: Robinhood Chain RPC, ERC-20
+            Transfer logs indexed by FOLDMARK.
+          </p>
+        ) : (
+          <p className="label-s normal-case tracking-[0.02em] text-ink-faint">
+            SOURCE · PRODUCT ARCHITECTURE PREVIEW. No observed transfer data is used to draw it.
+          </p>
+        )}
       </div>
     </div>
   );
