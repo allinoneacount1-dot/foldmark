@@ -73,7 +73,7 @@ export default async function Home() {
   ]);
 
   const assets = assetsResult.rows;
-  const byAsset = foldByAsset(activity.rows, assets, "24H", now);
+  const byAsset = foldByAsset(activity.rows, assets, "24H", now, activity.capped);
   const edges = foldEdges(activity.rows, assets, 12);
   const graph = buildMarketGraph(activity.rows, assets, { limitAddresses: 8, limitAssets: 8 });
   const prices = await getLatestPrices(assets.map((a) => a.id));

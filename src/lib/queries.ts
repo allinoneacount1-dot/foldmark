@@ -16,6 +16,7 @@ import { db as sqlClient, isDatabaseConfigured } from "@/server/db/client";
 import { ROBINHOOD_CHAIN, getPulse } from "@/lib/chain";
 import { WINDOW_MS, type FlowWindow, type AssetType } from "@/config/site";
 import { fromBaseUnits } from "@/lib/format";
+import { BUCKETS, bucketise, type Bucket } from "@/lib/buckets";
 import { type DataState, type Measured, indexing, measured, unavailable } from "@/lib/data-state";
 import type { Movement } from "@/lib/notional";
 /**
@@ -43,7 +44,6 @@ const DB = {
 
 /** Row cap per aggregation window. Hitting it downgrades the result to PARTIAL. */
 const ROW_CAP = 2000;
-const BUCKETS = 24;
 
 export type AssetRow = {
   id: string;
@@ -516,8 +516,12 @@ export type WindowActivity = {
   activeAssets: number;
   uniquePairs: number;
   capped: boolean;
-  /** transfer counts bucketed oldest -> newest, for the activity histogram */
-  buckets: number[];
+  /**
+   * Transfer counts bucketed oldest -> newest, for the activity histogram.
+   * A null interval was never read because the row cap truncated the window;
+   * it is not an interval with no activity.
+   */
+  buckets: Bucket[];
   bucketMinutes: number;
   rows: TransferRow[];
   /** How far the index actually reaches, so the window can qualify itself. */
@@ -536,14 +540,14 @@ export async function getWindowActivity(window: FlowWindow, now: number): Promis
   const pairs = new Set<string>();
   const span = WINDOW_MS[window];
   const start = now - span;
-  const buckets = new Array<number>(BUCKETS).fill(0);
+  // Intervals the cap never reached come back null rather than zero.
+  const buckets = bucketise(rows, start, span, capped);
 
   for (const r of rows) {
     addresses.add(r.from_address);
     addresses.add(r.to_address);
     if (r.asset_id) assets.add(r.asset_id);
     pairs.add(r.from_address + ">" + r.to_address);
-    buckets[bucketIndex(r.timestamp, start, span)] += 1;
   }
 
   return {
@@ -564,11 +568,7 @@ export async function getWindowActivity(window: FlowWindow, now: number): Promis
   };
 }
 
-function bucketIndex(iso: string, start: number, span: number): number {
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t)) return 0;
-  return Math.min(BUCKETS - 1, Math.max(0, Math.floor(((t - start) / span) * BUCKETS)));
-}
+
 
 export type AssetActivity = {
   assetId: string;
@@ -577,7 +577,8 @@ export type AssetActivity = {
   volume: number;
   lastBlock: number | null;
   lastSeen: string | null;
-  buckets: number[];
+  /** Null where the row cap stopped before the interval. Never a stand-in zero. */
+  buckets: Bucket[];
 };
 
 /** One pass over a window of transfers, folded per asset. Avoids N queries for N assets. */
@@ -586,10 +587,17 @@ export function foldByAsset(
   assets: AssetRow[],
   window: FlowWindow,
   now: number,
+  /**
+   * Whether the query that produced `rows` hit its row cap. Callers that have
+   * the flag must pass it: without it a truncated window's older intervals are
+   * indistinguishable from quiet ones, and get published as zeros.
+   */
+  capped = false,
 ): Map<string, AssetActivity> {
   const decimals = new Map(assets.map((a) => [a.id, a.decimals]));
   const seenPerAsset = new Map<string, Set<string>>();
   const out = new Map<string, AssetActivity>();
+  const perAssetRows = new Map<string, TransferRow[]>();
   const span = WINDOW_MS[window];
   const start = now - span;
 
@@ -604,11 +612,13 @@ export function foldByAsset(
         volume: 0,
         lastBlock: null,
         lastSeen: null,
-        buckets: new Array<number>(BUCKETS).fill(0),
+        buckets: [],
       };
       out.set(r.asset_id, entry);
       seenPerAsset.set(r.asset_id, new Set<string>());
+      perAssetRows.set(r.asset_id, []);
     }
+    perAssetRows.get(r.asset_id)!.push(r);
     const seen = seenPerAsset.get(r.asset_id)!;
     seen.add(r.from_address);
     seen.add(r.to_address);
@@ -618,10 +628,17 @@ export function foldByAsset(
       entry.lastBlock = r.block_number;
       entry.lastSeen = r.timestamp;
     }
-    entry.buckets[bucketIndex(r.timestamp, start, span)] += 1;
   }
 
-  for (const [id, entry] of out) entry.counterparties = seenPerAsset.get(id)?.size ?? 0;
+  for (const [id, entry] of out) {
+    entry.counterparties = seenPerAsset.get(id)?.size ?? 0;
+    /**
+     * Bucketed per asset from that asset's own rows. The cap applies to the
+     * whole query, so a capped read leaves every asset's early intervals
+     * unread — including an asset whose own rows happen to be few.
+     */
+    entry.buckets = bucketise(perAssetRows.get(id) ?? [], start, span, capped);
+  }
   return out;
 }
 

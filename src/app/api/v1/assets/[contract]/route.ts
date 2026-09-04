@@ -35,7 +35,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ contract
 
   const now = Date.now();
   const transfers = await getTransfersSince(since(window, now), { assetId: asset.id, limit: 2000 });
-  const folded = foldByAsset(transfers.rows, [asset], window, now).get(asset.id);
+  const folded = foldByAsset(transfers.rows, [asset], window, now, transfers.capped).get(asset.id);
   const prices = await getLatestPrices([asset.id]);
   const price = prices.get(asset.id);
   const peers = foldByAddress(transfers.rows, [asset], 10);
@@ -63,6 +63,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ contract
           last_block: folded.lastBlock,
           last_seen: folded.lastSeen,
           buckets: folded.buckets,
+          /**
+           * Stated because a consumer will otherwise plot null as zero, which
+           * is exactly the mistake this field used to make itself: a capped
+           * read published its untouched intervals as measured quiet.
+           */
+          buckets_semantics:
+            "One count per equal interval, oldest first. A number is a count. null is an interval the read never reached because the row cap truncated the window — it is not zero, and plotting it as zero asserts quiet that was never observed.",
         }
       : { transfers: 0, state: "NO ACTIVITY" },
     price: price

@@ -12,12 +12,21 @@
  */
 
 import { compact, integer } from "@/lib/format";
+import { bucketTotal, uncoveredIntervals, type Bucket } from "@/lib/buckets";
 
 /** The instrument with no signal: frame, grid and axes, drawn without a series. */
 export { ChartFrame, EmptyChartSurface } from "./ChartSurface";
 
 /* ------------------------------------------------------------- sparkline */
 
+/**
+ * A line over intervals, where an unread interval is a BREAK and not a zero.
+ *
+ * The series may contain nulls: intervals the row cap never reached. Drawing
+ * through them would invent a shape — usually a long flat run at the baseline,
+ * which reads as "nothing happened" when the truth is "nobody looked". So the
+ * path is split into segments at every null, and the gap is left empty.
+ */
 export function Sparkline({
   series,
   width = 160,
@@ -25,16 +34,18 @@ export function Sparkline({
   tone = "ink",
   label,
 }: {
-  series: number[];
+  series: readonly Bucket[];
   width?: number;
   height?: number;
   tone?: "ink" | "signal" | "muted";
   label?: string;
 }) {
+  const known = series.filter((v): v is number => v !== null);
+
   // Fewer than two observations is not a line. The slot keeps its baseline and
   // holds a dash, the same way a metric does — it occupies the space without
   // asserting a shape.
-  if (series.length < 2) {
+  if (known.length < 2) {
     return (
       <div
         className="flex h-8 w-full items-center justify-center border-b border-rule-faint"
@@ -48,17 +59,36 @@ export function Sparkline({
     );
   }
 
-  const max = Math.max(...series);
-  const min = Math.min(...series);
+  const max = Math.max(...known);
+  const min = Math.min(...known);
   const span = max - min || 1;
   const stepX = width / (series.length - 1);
   const pad = 2;
   const y = (v: number) => height - pad - ((v - min) / span) * (height - pad * 2);
 
-  const d = series.map((v, i) => `${i === 0 ? "M" : "L"}${(i * stepX).toFixed(2)} ${y(v).toFixed(2)}`).join(" ");
+  /**
+   * One path per run of known intervals. A null ends the current run rather
+   * than being interpolated across, so an unread stretch shows as a gap in the
+   * line — visibly different from a run of real zeros, which draws flat along
+   * the baseline.
+   */
+  const segments: string[] = [];
+  let current: string[] = [];
+  for (const [i, v] of series.entries()) {
+    if (v === null) {
+      if (current.length > 1) segments.push(current.join(" "));
+      current = [];
+      continue;
+    }
+    current.push(`${current.length === 0 ? "M" : "L"}${(i * stepX).toFixed(2)} ${y(v).toFixed(2)}`);
+  }
+  if (current.length > 1) segments.push(current.join(" "));
+
   const stroke = tone === "signal" ? "var(--color-signal)" : tone === "muted" ? "var(--color-ink-faint)" : "var(--color-ink-muted)";
 
   const last = series[series.length - 1];
+  const unread = uncoveredIntervals(series);
+  const gapNote = unread ? ` (${unread} of ${series.length} intervals not read)` : "";
 
   return (
     <svg
@@ -66,35 +96,64 @@ export function Sparkline({
       preserveAspectRatio="none"
       className="h-8 w-full"
       role={label ? "img" : "presentation"}
-      aria-label={label}
+      aria-label={label ? `${label}${gapNote}` : undefined}
     >
-      <path d={d} fill="none" stroke={stroke} strokeWidth="1" vectorEffect="non-scaling-stroke" />
-      <circle cx={width} cy={y(last)} r="1.6" fill="var(--color-signal)" vectorEffect="non-scaling-stroke" />
+      {segments.map((d, i) => (
+        <path key={i} d={d} fill="none" stroke={stroke} strokeWidth="1" vectorEffect="non-scaling-stroke" />
+      ))}
+      {last === null ? null : (
+        <circle cx={width} cy={y(last)} r="1.6" fill="var(--color-signal)" vectorEffect="non-scaling-stroke" />
+      )}
     </svg>
   );
 }
 
 /* ------------------------------------------------------------- histogram */
 
+/**
+ * Bars over intervals, where an unread interval draws NOTHING.
+ *
+ * Three states, and they must look different from each other: a bar (activity),
+ * a hairline on the baseline (observed, and genuinely zero), and empty space
+ * (never read, because the row cap stopped short). Collapsing the last two is
+ * how a LIMIT clause gets published as a measurement of quiet.
+ */
 export function Histogram({
   buckets,
   height = 44,
   label,
   bucketMinutes,
 }: {
-  buckets: number[];
+  buckets: readonly Bucket[];
   height?: number;
   label: string;
   bucketMinutes?: number;
 }) {
-  const max = Math.max(...buckets, 0);
-  const total = buckets.reduce((a, b) => a + b, 0);
+  const known = buckets.filter((b): b is number => b !== null);
+  const max = Math.max(...known, 0);
+  const total = bucketTotal(buckets);
+  const unread = uncoveredIntervals(buckets);
+  const gapNote = unread ? `, ${unread} intervals not read` : "";
 
   if (!buckets.length || max === 0) {
     return (
-      <div className="flex items-end gap-[2px]" style={{ height }} role="img" aria-label={`${label}: no activity observed`}>
-        {Array.from({ length: buckets.length || 24 }, (_, i) => (
-          <span key={i} aria-hidden className="flex-1 bg-rule-faint" style={{ height: 1 }} />
+      <div
+        className="flex items-end gap-[2px]"
+        style={{ height }}
+        role="img"
+        aria-label={
+          known.length
+            ? `${label}: no activity observed${gapNote}`
+            : `${label}: no interval was read`
+        }
+      >
+        {(buckets.length ? buckets : Array.from({ length: 24 }, () => 0 as Bucket)).map((v, i) => (
+          <span
+            key={i}
+            aria-hidden
+            className={v === null ? "flex-1" : "flex-1 bg-rule-faint"}
+            style={{ height: 1 }}
+          />
         ))}
       </div>
     );
@@ -105,9 +164,12 @@ export function Histogram({
       className="flex items-end gap-[2px]"
       style={{ height }}
       role="img"
-      aria-label={`${label}: ${integer(total)} across ${buckets.length} intervals${bucketMinutes ? ` of ${bucketMinutes} minutes` : ""}`}
+      aria-label={`${label}: ${integer(total)} across ${buckets.length - unread} of ${buckets.length} intervals${bucketMinutes ? ` of ${bucketMinutes} minutes` : ""}${gapNote}`}
     >
       {buckets.map((v, i) => {
+        // Never read: the column is left empty. It is not a zero and must not
+        // borrow the baseline hairline that a real zero uses.
+        if (v === null) return <span key={i} aria-hidden className="flex-1" />;
         const h = v === 0 ? 1 : Math.max(2, Math.round((v / max) * height));
         const isLast = i === buckets.length - 1;
         return (

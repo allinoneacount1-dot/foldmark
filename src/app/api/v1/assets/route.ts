@@ -25,7 +25,7 @@ export async function GET(req: Request) {
     });
   }
 
-  const folded = foldByAsset(activity.rows, rows, window, now);
+  const folded = foldByAsset(activity.rows, rows, window, now, activity.capped);
   const prices = await getLatestPrices(rows.map((a) => a.id));
 
   return NextResponse.json({

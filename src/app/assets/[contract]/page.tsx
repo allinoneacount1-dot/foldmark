@@ -44,6 +44,7 @@ import { PriceHistoryPanel } from "@/components/market/PriceHistoryPanel";
 import { priceHistory, assetNotional } from "@/server/market/historical";
 import { blockLabel, compact, integer, isAddress, relativeTime, shortAddress } from "@/lib/format";
 import { withheldMetrics } from "@/lib/market-copy";
+import { bucketise } from "@/lib/buckets";
 import { ASSET_TYPE_LABEL, CHAIN, WINDOWS, type FlowWindow } from "@/config/site";
 
 export const revalidate = 30;
@@ -137,7 +138,7 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
   const windowRows = await Promise.all(
     WINDOWS.map(async (w) => {
       const res = await getTransfersSince(since(w, now), { assetId: asset.id, limit: 2000 });
-      const folded = foldByAsset(res.rows, [asset], w, now).get(asset.id);
+      const folded = foldByAsset(res.rows, [asset], w, now, res.capped).get(asset.id);
       return { window: w, state: res.state, capped: res.capped, folded, rows: res.rows };
     }),
   );
@@ -585,12 +586,8 @@ function deriveActivity(
     pairs.add(r.from_address + ">" + r.to_address);
   }
   const span = { "1H": 3_600_000, "6H": 21_600_000, "24H": 86_400_000, "7D": 604_800_000, "30D": 2_592_000_000 }[row.window];
-  const buckets = new Array<number>(24).fill(0);
-  for (const r of row.rows) {
-    const t = new Date(r.timestamp).getTime();
-    const idx = Math.min(23, Math.max(0, Math.floor(((t - (now - span)) / span) * 24)));
-    buckets[idx] += 1;
-  }
+  // Intervals the row cap never reached come back null, not zero.
+  const buckets = bucketise(row.rows, now - span, span, row.capped);
   return {
     state: row.state,
     window: row.window,

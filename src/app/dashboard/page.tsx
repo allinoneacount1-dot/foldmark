@@ -88,7 +88,7 @@ export default async function DashboardPage({
   ]);
 
   const assets = assetsResult.rows;
-  const activityByAsset = foldByAsset(activity.rows, assets, window, now);
+  const activityByAsset = foldByAsset(activity.rows, assets, window, now, activity.capped);
   /**
    * What moved against the equivalent window before this one. Descriptive only:
    * both numbers behind every change are carried through to the reader.

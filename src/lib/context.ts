@@ -32,7 +32,7 @@ export async function buildAssetContext(key: string, window: FlowWindow = "24H")
     getTransfersSince(since(window, now), { assetId: asset.id, limit: 2000 }),
   ]);
 
-  const folded = foldByAsset(transfers.rows, [asset], window, now).get(asset.id);
+  const folded = foldByAsset(transfers.rows, [asset], window, now, transfers.capped).get(asset.id);
   const prices = await getLatestPrices([asset.id]);
   const price = prices.get(asset.id);
   const peers = foldByAddress(transfers.rows, [asset], 5);

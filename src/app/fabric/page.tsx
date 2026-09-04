@@ -26,6 +26,7 @@ import { buildMarketGraph } from "@/lib/graph";
 import { integer } from "@/lib/format";
 import type { DataState } from "@/lib/data-state";
 import { presentLabel } from "@/lib/presentation-state";
+import { bucketise } from "@/lib/buckets";
 import { ASSET_TYPE_LABEL, ASSET_TYPES, WINDOWS, CHAIN, type AssetType, type FlowWindow } from "@/config/site";
 
 export const metadata: Metadata = {
@@ -363,7 +364,6 @@ function recount(base: WindowActivity, rows: WindowActivity["rows"], now: number
   const addresses = new Set<string>();
   const assets = new Set<string>();
   const pairs = new Set<string>();
-  const buckets = new Array<number>(base.buckets.length).fill(0);
   const span = base.bucketMinutes * 60000 * base.buckets.length;
   const start = now - span;
 
@@ -372,10 +372,14 @@ function recount(base: WindowActivity, rows: WindowActivity["rows"], now: number
     addresses.add(r.to_address);
     if (r.asset_id) assets.add(r.asset_id);
     pairs.add(r.from_address + ">" + r.to_address);
-    const t = new Date(r.timestamp).getTime();
-    const i = Math.min(buckets.length - 1, Math.max(0, Math.floor(((t - start) / span) * buckets.length)));
-    buckets[i] += 1;
   }
+
+  /**
+   * The filtered subset inherits the base window's cap. Filtering cannot
+   * un-truncate a read: intervals the original query never reached stay unread
+   * however few rows survive the filter.
+   */
+  const buckets = bucketise(rows, start, span, base.capped);
 
   return {
     ...base,

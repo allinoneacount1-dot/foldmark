@@ -14,6 +14,7 @@ import { getAssets, getIndexerStatus, getTransfersSince, since, requestNow,
 } from "@/lib/queries";
 import { buildMarketGraph } from "@/lib/graph";
 import { measured, indexing, type Measured } from "@/lib/data-state";
+import { bucketise } from "@/lib/buckets";
 import {
   blockLabel,
   compact,
@@ -81,7 +82,6 @@ export default async function WalletPage({
   const counterparties = new Map<string, { transfers: number; inTransfers: number; byAsset: Map<string, Flow> }>();
   const exposure = new Map<string, Flow>();
   const span = WINDOW_MS[window];
-  const buckets = new Array<number>(24).fill(0);
 
   for (const r of rows) {
     const decimals = assetById.get(r.asset_id ?? "")?.decimals ?? 18;
@@ -111,10 +111,10 @@ export default async function WalletPage({
       exposure.set(r.asset_id, ex);
     }
 
-    const t = new Date(r.timestamp).getTime();
-    const idx = Math.min(23, Math.max(0, Math.floor(((t - (now - span)) / span) * 24)));
-    buckets[idx] += 1;
   }
+
+  // Intervals the row cap never reached come back null, not zero.
+  const buckets = bucketise(rows, now - span, span, transfers.capped);
 
   /** The asset a relationship is mostly made of, so magnitude keeps its unit. */
   const dominant = (byAsset: Map<string, Flow>) => {

@@ -87,7 +87,7 @@ export default async function AssetsPage({
     getChainHead(),
   ]);
   const all = assetsResult.rows;
-  const byAsset = foldByAsset(activity.rows, all, window, now);
+  const byAsset = foldByAsset(activity.rows, all, window, now, activity.capped);
   const prices = await getLatestPrices(all.map((a) => a.id));
 
   // Whether the registry query succeeded, as distinct from returning nothing.
