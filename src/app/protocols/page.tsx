@@ -133,7 +133,10 @@ export default async function ProtocolsPage({
                   sideways. */}
               <div className="w-full overflow-x-auto px-4 py-6 sm:px-6">
                 <div className="min-w-[660px]">
-                  <ClassificationPipeline mode="model" />
+                  <ClassificationPipeline
+                    mode="model"
+                    caption="A contract enters at OBSERVED and moves only as far as its evidence carries it. Nothing on this chain reaches VERIFIED yet: that needs an issuer-published address, and a ticker or a name is not one."
+                  />
                 </div>
               </div>
               {/* Four stages divide evenly into one, two and four columns, so
@@ -178,19 +181,6 @@ export default async function ProtocolsPage({
               </p>
             </div>
           </Figure>
-        </div>
-
-        {/*
-          The model, not a state. No entity is in view here, so no stage is
-          marked current — and VERIFIED stays dark because no authoritative
-          source is wired for this chain. Lighting it would assert exactly the
-          thing the registry below reports it does not have.
-        */}
-        <div className="mt-8">
-          <ClassificationPipeline
-            mode="model"
-            caption="A contract enters at OBSERVED and moves only as far as its evidence carries it. Nothing on this chain reaches VERIFIED yet: that needs an issuer-published address, and a ticker or a name is not one."
-          />
         </div>
 
         <div className="mt-8">

@@ -12,7 +12,14 @@ name: FOLDMARK ingestion heartbeat
 # failed.
 
 on:
-  schedule:
+  # The schedule is DISABLED. Supabase pg_cron is the primary heartbeat now:
+  # it fired reliably where GitHub produced zero scheduled runs in fifty
+  # minutes of polling, and two schedulers racing the same cursor would spend
+  # the provider budget twice for one range. This workflow stays for manual
+  # recovery, diagnostics and emergency replay.
+  #
+  # schedule:
+    # (retained for reference)
     # Offset minutes, not "*/5".
     #
     # GitHub runs scheduled workflows on a shared queue and drops or delays them
@@ -25,8 +32,8 @@ on:
     # working through a backlog, so cadence sets how fresh the sample is, not
     # whether it can keep up: the chain produces roughly 580 blocks a minute and
     # each pass jumps to the safe head regardless of how long it has been.
-    - cron: "3,18,33,48 * * * *"
-  # So a pass can be triggered by hand without waiting for the schedule.
+    # - cron: "3,18,33,48 * * * *"
+  # Manual invocation only.
   workflow_dispatch:
 
 # A slow pass must not overlap the next tick and spend the provider budget twice.
