@@ -225,8 +225,24 @@ function toTextStream(body: ReadableStream<Uint8Array>, signal?: AbortSignal): R
         }
         try {
           const parsed = JSON.parse(payload);
-          const delta: unknown = parsed?.choices?.[0]?.delta?.content;
+          const choice = parsed?.choices?.[0];
+          const delta: unknown = choice?.delta?.content;
           if (typeof delta === "string" && delta) controller.enqueue(encoder.encode(delta));
+          /**
+           * Close on the finish reason as well as on [DONE].
+           *
+           * Not every provider terminates the stream with a [DONE] sentinel.
+           * Waiting only for that left a finished answer with the connection
+           * still open, so the reader saw a typing cursor blinking after the
+           * last word until a timeout eventually cut it. A non-null
+           * finish_reason is the model saying it is done, and it is honoured
+           * here.
+           */
+          if (choice?.finish_reason) {
+            controller.close();
+            await reader.cancel().catch(() => {});
+            return;
+          }
         } catch {
           /* a partial or non-JSON frame; the next chunk completes it */
         }
