@@ -48,6 +48,7 @@ export type EnrichReport = {
   pairsDiscovered: number;
   priceObservationsWritten: number;
   poolContractsRegistered: number;
+  protocolsRegistered: number;
   requests: number;
   durationMs: number;
   sample: (MarketObservation & { assetSymbol: string; assetContract: string }) | null;
@@ -83,6 +84,7 @@ export async function runEnrichPass(
     pairsDiscovered: 0,
     priceObservationsWritten: 0,
     poolContractsRegistered: 0,
+    protocolsRegistered: 0,
     requests: 0,
     durationMs: 0,
     sample: null,
@@ -105,6 +107,8 @@ export async function runEnrichPass(
   const metadataRows: Record<string, unknown>[] = [];
   const contractRows: Record<string, unknown>[] = [];
   const seenPools = new Set<string>();
+  /** Provider-reported venue ids seen on real EVM pools, and their pool counts. */
+  const venues = new Map<string, number>();
 
   for (const asset of queue) {
     if (Date.now() > deadline) break;
@@ -240,9 +244,19 @@ export async function runEnrichPass(
        * table whose whole purpose is identity.
        */
       if (!/^0x[0-9a-f]{40}$/.test(m.pairAddress)) continue;
+      venues.set(m.venue, (venues.get(m.venue) ?? 0) + 1);
       contractRows.push({
         address: m.pairAddress,
         contract_type: "dex_pool",
+        /**
+         * The venue the provider reported, used as the protocol id.
+         *
+         * This links a pool to the venue operating it, which is what turns a
+         * list of anonymous pool addresses into a protocol with contracts. The
+         * id is the provider's own identifier, kept verbatim so the claim
+         * stays traceable to who made it.
+         */
+        protocol_id: m.venue,
         verified: false,
       });
     }
@@ -256,6 +270,28 @@ export async function runEnrichPass(
   if (metadataRows.length) {
     await upsertRows("asset_metadata", metadataRows, "asset_id");
   }
+  /**
+   * Protocols are written BEFORE the contracts that reference them, because
+   * contracts.protocol_id is a foreign key and an ordering mistake here would
+   * silently drop every link.
+   *
+   * category is DEX because the evidence is a DEX aggregator reporting pools.
+   * verified stays FALSE: a provider naming a venue is not an authoritative
+   * source confirming what that venue is, and collapsing those two would repeat
+   * the defect that put a false VERIFIED badge on fourteen assets.
+   */
+  if (venues.size) {
+    const protocolRows = [...venues.keys()].map((venue) => ({
+      id: venue,
+      // The provider's own identifier, verbatim. Not a name FOLDMARK invented.
+      name: venue,
+      category: "DEX",
+      verified: false,
+    }));
+    const ok = await upsertRows("protocols", protocolRows, "id");
+    if (ok) report.protocolsRegistered = protocolRows.length;
+  }
+
   if (contractRows.length) {
     const ok = await upsertRows("contracts", contractRows, "address");
     if (ok) report.poolContractsRegistered = contractRows.length;
