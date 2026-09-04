@@ -195,6 +195,29 @@ function toTextStream(body: ReadableStream<Uint8Array>, signal?: AbortSignal): R
   const encoder = new TextEncoder();
   let buffer = "";
 
+  /**
+   * Idle guard.
+   *
+   * A free model can stall part-way through an answer and simply stop sending,
+   * without closing the connection or emitting a finish reason. Waiting on it
+   * forever leaves the reader watching a half-written sentence, so a read that
+   * produces nothing for this long ends the stream and keeps what arrived. The
+   * client treats a non-empty partial as an answer rather than discarding it.
+   */
+  const IDLE_MS = 15_000;
+
+  const readWithIdleTimeout = async (): Promise<{ done: boolean; value?: Uint8Array }> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const idle = new Promise<{ done: boolean }>((resolve) => {
+      timer = setTimeout(() => resolve({ done: true }), IDLE_MS);
+    });
+    try {
+      return (await Promise.race([reader.read(), idle])) as { done: boolean; value?: Uint8Array };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       if (signal?.aborted) {
@@ -202,7 +225,7 @@ function toTextStream(body: ReadableStream<Uint8Array>, signal?: AbortSignal): R
         await reader.cancel().catch(() => {});
         return;
       }
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithIdleTimeout();
       if (done) {
         controller.close();
         return;
