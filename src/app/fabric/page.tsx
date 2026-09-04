@@ -423,12 +423,19 @@ function Legend({
   return (
     <div className="shrink-0 border-t border-rule bg-void">
       <dl className="shell grid grid-cols-2 gap-x-6 gap-y-1.5 py-2.5 sm:flex sm:flex-wrap sm:items-center sm:gap-x-8 sm:gap-y-2">
+        {/*
+          The legend documents what the canvas actually draws. It described a
+          left-to-right composition after the map became radial, and described
+          edge weight as value when the renderer scales it by transfer count —
+          a legend that disagrees with its own drawing is worse than none.
+        */}
         <Item
           term="POSITION"
-          def={`${sources} sources left · ${assets} assets centre · ${destinations} destinations right`}
+          def={`Role rings — ${assets} assets inner · ${sources + destinations} addresses outward`}
         />
-        <Item term="RADIUS" def="Square root of observed value moved" />
-        <Item term="EDGE WEIGHT" def="Value transferred along that relationship" />
+        <Item term="RADIUS" def="Observed value moved, square rooted" />
+        <Item term="EDGE WEIGHT" def="Transfers along that relationship, not token amount" />
+        <Item term="ARROW" def="The direction value moved" />
         <Item
           term="RING"
           def={

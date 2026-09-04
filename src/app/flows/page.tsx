@@ -37,6 +37,7 @@ import {
   buildContractIndex,
   filterByFlowClass,
   countByFlowClass,
+  classifyEdge,
 } from "@/lib/flow-classification";
 import { toNotional, notionalNote, prepareSeries, DEFAULT_ALIGNMENT } from "@/lib/notional";
 
@@ -366,7 +367,13 @@ export default async function FlowsPage({
                     <span className="tabular font-mono text-data-s text-ink-muted">{integer(e.transfers)}</span>
                   </LedgerCell>
                   <LedgerCell column={FLOW_COLUMNS[5]}>
-                    <span className="label-s text-ink-faint">UNCLASSIFIED</span>
+                    {/*
+                      Classified, not asserted. This cell printed the literal
+                      UNCLASSIFIED, which is the right answer only while the
+                      registry is empty — it would have kept printing it after a
+                      registry existed, turning a correct state into a stale one.
+                    */}
+                    <span className="label-s text-ink-faint">{classifyEdge({ from: e.from, to: e.to }, contracts)}</span>
                   </LedgerCell>
                 </LedgerRow>
               ))

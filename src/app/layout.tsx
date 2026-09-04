@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Jost } from "next/font/google";
 import "./globals.css";
@@ -6,6 +7,7 @@ import { MotionProvider } from "@/components/MotionProvider";
 import { SiteHeader } from "@/components/shell/SiteHeader";
 import { SiteFooter } from "@/components/shell/SiteFooter";
 import { RouteTransition } from "@/components/shell/RouteTransition";
+import { FoldmarkIntelligence } from "@/components/intelligence-guide/FoldmarkIntelligence";
 import { SITE } from "@/config/site";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"], display: "swap" });
@@ -56,6 +58,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <RouteTransition>{children}</RouteTransition>
             </main>
             <SiteFooter />
+            {/*
+              The guide is mounted once, at the root, so it is reachable from every
+              surface without each page wiring it. It reads the route it is on and
+              renders nothing but a launcher until it is opened.
+            */}
+            <Suspense fallback={null}>
+              <FoldmarkIntelligence />
+            </Suspense>
           </MotionProvider>
         </Providers>
       </body>
