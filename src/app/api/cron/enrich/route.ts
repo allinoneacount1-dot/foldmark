@@ -3,6 +3,7 @@ import { runEnrichPass } from "@/server/market/enrich";
 import { selectRows, countRows, supabaseConfigured } from "@/server/db/supabase";
 import { NETWORK_ID, PRIMARY_MARKET_METHOD } from "@/server/market/geckoterminal";
 import { CHAIN } from "@/config/site";
+import { cronAuthorized } from "@/server/cron/auth";
 
 /**
  * The hosted market-enrichment endpoint.
@@ -20,14 +21,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-function authorized(req: Request): boolean {
-  const expected = process.env.INGEST_SECRET?.trim();
-  if (!expected) return false;
-  const header = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
-  const param = new URL(req.url).searchParams.get("key")?.trim();
-  const vercelCron = req.headers.get("x-vercel-cron") !== null;
-  return vercelCron || header === expected || param === expected;
-}
+/** One rule about who may spend a quota, shared with the ingestion endpoint. */
+const authorized = cronAuthorized;
 
 /** Read-only. Provider coverage as it actually stands, with nothing implied. */
 async function status() {

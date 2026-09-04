@@ -4,6 +4,7 @@ import { repairTimestamps, repairVerification } from "@/server/ingest/repair";
 import { chainHead, safeHead } from "@/server/ingest/transport";
 import { restCursor } from "@/server/db/rest-queries";
 import { supabaseConfigured, countRows } from "@/server/db/supabase";
+import { cronAuthorized } from "@/server/cron/auth";
 
 /**
  * The hosted ingestion endpoint.
@@ -21,15 +22,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-function authorized(req: Request): boolean {
-  const expected = process.env.INGEST_SECRET?.trim();
-  if (!expected) return false;
-  const header = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
-  const param = new URL(req.url).searchParams.get("key")?.trim();
-  // Vercel signs its own scheduler calls; accept those too.
-  const vercelCron = req.headers.get("x-vercel-cron") !== null;
-  return vercelCron || header === expected || param === expected;
-}
+/** One rule about who may spend a quota, shared with the enrichment endpoint. */
+const authorized = cronAuthorized;
 
 /**
  * Ingestion health.
