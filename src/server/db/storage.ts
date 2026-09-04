@@ -37,6 +37,16 @@ export type StorageReport = {
   usedFraction: number | null;
   /** Largest relations, so growth can be attributed rather than guessed at. */
   largest: { relation: string; bytes: number }[];
+  /**
+   * How far back the stored transfers actually reach.
+   *
+   * Storage and reach are the same question asked twice. The interface offers
+   * 7D and 30D windows; whether the index can honestly fill them depends on how
+   * many days of transfers survive under the ceiling, and that is measurable
+   * rather than assumable.
+   */
+  oldestTransferAt: string | null;
+  newestTransferAt: string | null;
   note: string;
 };
 
@@ -48,6 +58,8 @@ const UNREADABLE: StorageReport = {
   limitBytes: FREE_TIER_LIMIT_BYTES,
   usedFraction: null,
   largest: [],
+  oldestTransferAt: null,
+  newestTransferAt: null,
   note: NOTE,
 };
 
@@ -82,6 +94,14 @@ export async function databaseSize(): Promise<StorageReport> {
        limit 6
     `;
 
+    /**
+     * The reach of the stored transfers. Two indexed lookups on the timestamp
+     * column, not a scan, so this stays cheap enough to sit on a status route.
+     */
+    const reach = await sql<{ oldest: string | null; newest: string | null }>`
+      select min(timestamp)::text as oldest, max(timestamp)::text as newest from transfers
+    `;
+
     return {
       bytes,
       limitBytes: FREE_TIER_LIMIT_BYTES,
@@ -89,6 +109,8 @@ export async function databaseSize(): Promise<StorageReport> {
       largest: (rows ?? [])
         .map((r) => ({ relation: String(r.relation), bytes: Number(r.bytes) }))
         .filter((r) => Number.isFinite(r.bytes)),
+      oldestTransferAt: reach?.[0]?.oldest ?? null,
+      newestTransferAt: reach?.[0]?.newest ?? null,
       note: NOTE,
     };
   } catch {

@@ -97,6 +97,13 @@ async function status() {
       limit_bytes: storage.limitBytes,
       used_fraction: storage.usedFraction === null ? null : Number(storage.usedFraction.toFixed(4)),
       largest_relations: storage.largest,
+      /**
+       * Storage and reach are the same question asked twice: the interface
+       * offers a 30D window, and whether the index can honestly fill it depends
+       * on how many days of transfers survive under the ceiling.
+       */
+      oldest_transfer_at: storage.oldestTransferAt,
+      newest_transfer_at: storage.newestTransferAt,
       note: storage.note,
     },
   };
