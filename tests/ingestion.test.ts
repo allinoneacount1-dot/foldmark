@@ -12,6 +12,7 @@ import {
   SAFETY_BLOCKS,
 } from "@/server/ingest/transport";
 import { DEFAULT_MODEL, reasoningConfig } from "@/lib/intelligence/providers/openrouter";
+import { ingestionHealth } from "@/app/api/cron/ingest/route";
 
 /**
  * Ingestion and the repairs.
@@ -286,7 +287,6 @@ describe("production ingestion does not depend on a developer machine", () => {
 
   it("is scheduled by hosted infrastructure", () => {
     expect(workflow).toContain("schedule:");
-    expect(workflow).toMatch(/cron:\s*"\*\/5 \* \* \* \*"/);
     expect(workflow).toContain("runs-on: ubuntu-latest");
   });
 
@@ -309,10 +309,53 @@ describe("production ingestion does not depend on a developer machine", () => {
   it("does not let a slow pass overlap the next tick", () => {
     // Two passes at once would spend the provider budget twice for one range.
     expect(workflow).toContain("concurrency:");
+    // Never cancel mid-flight: a cancelled pass could leave a range partly
+    // committed, and the cursor contract depends on whole-range commits.
+    expect(workflow).toContain("cancel-in-progress: false");
   });
 
   it("fails loudly when a pass does not commit", () => {
     // A silent red run is how an index stops moving without anyone noticing.
     expect(workflow).toContain("exit 1");
+  });
+});
+
+/* ========================================================================== */
+/*  INGESTION HEALTH                                                          */
+/* ========================================================================== */
+
+describe("health describes the ingestion, not the web server", () => {
+  const now = Date.now();
+  const minutesAgo = (m: number) => new Date(now - m * 60_000).toISOString();
+
+  it("is healthy after a recent pass with ordinary lag", () => {
+    expect(ingestionHealth(minutesAgo(5), 3_000)).toBe("HEALTHY");
+  });
+
+  it("tolerates a delayed schedule rather than crying failure", () => {
+    // The scheduler drifts. One missed cycle is not a broken pipeline.
+    expect(ingestionHealth(minutesAgo(20), 12_000)).toBe("HEALTHY");
+  });
+
+  it("goes stale when no pass has committed for too long", () => {
+    expect(ingestionHealth(minutesAgo(90), 1_000)).toBe("STALE");
+  });
+
+  it("reports stale over healthy even when lag looks small", () => {
+    // A tiny lag figure computed from an old cursor is not evidence of health;
+    // it just means nothing has moved. Staleness has to dominate.
+    expect(ingestionHealth(minutesAgo(120), 10)).toBe("STALE");
+  });
+
+  it("degrades when the index falls far behind the head", () => {
+    expect(ingestionHealth(minutesAgo(5), 500_000)).toBe("DEGRADED");
+  });
+
+  it("is stale when nothing has ever succeeded", () => {
+    expect(ingestionHealth(null, null)).toBe("STALE");
+  });
+
+  it("treats an unparseable timestamp as stale rather than healthy", () => {
+    expect(ingestionHealth("not-a-date", 100)).toBe("STALE");
   });
 });

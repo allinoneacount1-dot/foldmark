@@ -31,6 +31,26 @@ function authorized(req: Request): boolean {
   return vercelCron || header === expected || param === expected;
 }
 
+/**
+ * Ingestion health.
+ *
+ * STALE dominates: if no pass has committed recently, the lag figure is not
+ * evidence of anything and should not be allowed to report healthy. Thresholds
+ * are generous relative to the quarter-hourly cadence, so an ordinary delayed
+ * schedule does not read as a failure.
+ */
+export function ingestionHealth(lastSuccessAt: string | null, lagBlocks: number | null): "HEALTHY" | "DEGRADED" | "STALE" {
+  if (!lastSuccessAt) return "STALE";
+  const ageMs = Date.now() - Date.parse(lastSuccessAt);
+  if (!Number.isFinite(ageMs)) return "STALE";
+  // Two missed quarter-hourly cycles plus slack.
+  if (ageMs > 45 * 60_000) return "STALE";
+  // Head-following: a pass jumps to the safe head, so lag is a function of time
+  // since the last pass rather than a backlog. This is roughly an hour of blocks.
+  if (lagBlocks !== null && lagBlocks > 40_000) return "DEGRADED";
+  return "HEALTHY";
+}
+
 /** Read-only. Safe to expose: no secrets, only what the indexer has done. */
 async function status() {
   const [head, safe, cursor, transfers, assets] = await Promise.all([
@@ -49,9 +69,19 @@ async function status() {
     safe_head: safe,
     cursor: cursor.lastProcessedBlock,
     cursor_updated_at: cursor.updatedAt,
+    last_success_at: cursor.updatedAt,
     lag_blocks: lag,
     transfers_stored: transfers,
     assets_known: assets,
+    /**
+     * Health is about the INGESTION, not about whether this page responded.
+     *
+     * A reachable frontend says nothing about whether the index is still
+     * moving, and reporting green because a request succeeded is exactly how a
+     * stalled pipeline goes unnoticed. This reads the age of the last committed
+     * pass instead.
+     */
+    health: ingestionHealth(cursor.updatedAt, lag),
     /**
      * Stated rather than implied. This deployment follows the head within a
      * bounded budget; it does not claim the blocks behind the cursor are

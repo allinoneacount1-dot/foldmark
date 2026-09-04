@@ -13,14 +13,24 @@ name: FOLDMARK ingestion heartbeat
 
 on:
   schedule:
-    # Every five minutes, the shortest interval GitHub honours. Actual firing
-    # drifts under load, which the ingestion pass tolerates: it reads the cursor
-    # each time and works from wherever the chain actually is.
-    - cron: "*/5 * * * *"
+    # Offset minutes, not "*/5".
+    #
+    # GitHub runs scheduled workflows on a shared queue and drops or delays them
+    # under load. A */5 schedule fires on :00, :05, :10 — the exact boundaries
+    # every other repository on the platform also asks for — and in practice the
+    # first hour of this workflow produced no scheduled run at all. Odd, offset
+    # minutes sit away from that contention.
+    #
+    # Quarter-hourly is deliberate. Ingestion follows the head rather than
+    # working through a backlog, so cadence sets how fresh the sample is, not
+    # whether it can keep up: the chain produces roughly 580 blocks a minute and
+    # each pass jumps to the safe head regardless of how long it has been.
+    - cron: "3,18,33,48 * * * *"
   # So a pass can be triggered by hand without waiting for the schedule.
   workflow_dispatch:
 
 # A slow pass must not overlap the next tick and spend the provider budget twice.
+# Never cancel in flight: a cancelled pass could leave a range half-committed.
 concurrency:
   group: foldmark-ingest
   cancel-in-progress: false
@@ -34,8 +44,22 @@ jobs:
         env:
           INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
           ENDPOINT: https://foldmark-iota.vercel.app/api/cron/ingest
+          # Recorded so a run's own log proves whether the scheduler fired it or
+          # a person did. Autonomy is the thing being demonstrated, so it has to
+          # be visible in the artifact rather than inferred.
+          TRIGGER: ${{ github.event_name }}
         run: |
           set -euo pipefail
+
+          echo "trigger: ${TRIGGER}"
+
+          if [ -z "${INGEST_SECRET}" ]; then
+            echo "::error::INGEST_SECRET is not available to this run"
+            exit 1
+          fi
+
+          before=$(curl -sS --max-time 30 "${ENDPOINT}?action=status" || echo '{}')
+          echo "status_before: ${before}"
 
           # The secret travels as a header, never in the URL, so it cannot end up
           # in a proxy log or a referrer.
@@ -47,7 +71,10 @@ jobs:
           code=$(printf '%s' "$response" | tail -n1)
 
           echo "HTTP ${code}"
-          echo "$body"
+          echo "pass_result: ${body}"
+
+          after=$(curl -sS --max-time 30 "${ENDPOINT}?action=status" || echo '{}')
+          echo "status_after: ${after}"
 
           # A non-2xx means the pass did not commit. Failing loudly here is the
           # point: a silent red run is how an index stops moving unnoticed.
@@ -55,3 +82,8 @@ jobs:
             echo "::error::ingestion pass did not complete"
             exit 1
           fi
+
+          echo "### FOLDMARK ingestion (${TRIGGER})" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          echo "${body}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
