@@ -19,6 +19,7 @@ import {
   getWindowActivity,
   getFlowWindows,
   foldEdges,
+  getContracts,
   foldByAddress,
   dominantFlow,
   getPriceSeries,
@@ -28,6 +29,13 @@ import {
 } from "@/lib/queries";
 import { blockLabel, compact, integer, shortAddress, signed, utcClock } from "@/lib/format";
 import { WINDOWS, CHAIN, type FlowWindow } from "@/config/site";
+import {
+  FLOW_CLASSES,
+  parseFlowClass,
+  buildContractIndex,
+  filterByFlowClass,
+  countByFlowClass,
+} from "@/lib/flow-classification";
 import { toNotional, notionalNote, prepareSeries, DEFAULT_ALIGNMENT } from "@/lib/notional";
 
 export const metadata: Metadata = {
@@ -36,19 +44,6 @@ export const metadata: Metadata = {
 };
 
 export const revalidate = 30;
-
-const CLASSES = [
-  "DEX_BUY",
-  "DEX_SELL",
-  "LP_DEPOSIT",
-  "LP_WITHDRAW",
-  "LEND",
-  "BORROW",
-  "REPAY",
-  "BRIDGE_IN",
-  "BRIDGE_OUT",
-  "WALLET_TRANSFER",
-] as const;
 
 const FLOW_COLUMNS: LedgerColumn[] = [
   { key: "from", label: "SOURCE", width: "minmax(140px, 1.2fr)" },
@@ -59,15 +54,32 @@ const FLOW_COLUMNS: LedgerColumn[] = [
   { key: "class", label: "CLASSIFICATION", width: "minmax(130px, 1fr)", align: "right", hideBelow: "md" },
 ];
 
-export default async function FlowsPage({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
+export default async function FlowsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ w?: string; flow?: string }>;
+}) {
   const params = await searchParams;
   const window: FlowWindow = (WINDOWS as readonly string[]).includes(params.w ?? "") ? (params.w as FlowWindow) : "24H";
+
+  /**
+   * Filter state lives in the URL, not in component state.
+   *
+   * It survives a refresh, it can be sent to someone, back and forward work,
+   * and the server renders the same page the link describes. An unrecognised
+   * value parses to null and reads as ALL — a stale query string must never
+   * produce an empty page that looks like a measurement of nothing.
+   */
+  const flowFilter = parseFlowClass(params.flow);
   const now = await requestNow();
 
-  const [assetsResult, activity, flowRows, pulse] = await Promise.all([
+  const [assetsResult, activity, flowRows, contractsResult, pulse] = await Promise.all([
     getAssets(),
     getWindowActivity(window, now),
     getFlowWindows(window),
+    // The registry is what turns a transfer into a named flow. With it empty,
+    // every flow is honestly UNCLASSIFIED rather than guessed at.
+    getContracts(),
     /**
      * The chain answers with no database attached. Head, endpoint and round
      * trip are real measurements taken on this request, and they are why this
@@ -79,7 +91,18 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
 
   const assets = assetsResult.rows;
   const symbols = new Map(assets.map((a) => [a.id, a.symbol]));
-  const edges = foldEdges(activity.rows, assets, 20);
+
+  /**
+   * One filtered dataset, read by every surface on the page.
+   *
+   * The ledger, the counts, the rankings and the empty state all derive from
+   * `edges`. A chip that changed the table while the totals stayed global would
+   * be worse than a dead chip: it would be a working control telling a lie.
+   */
+  const contracts = buildContractIndex(contractsResult.rows);
+  const allEdges = foldEdges(activity.rows, assets, 20);
+  const classCounts = countByFlowClass(allEdges, contracts);
+  const edges = filterByFlowClass(allEdges, contracts, flowFilter);
   const addresses = foldByAddress(activity.rows, assets, 40);
 
   /**
@@ -540,19 +563,30 @@ export default async function FlowsPage({ searchParams }: { searchParams: Promis
                       UNCLASSIFIED — which is a real classification for a counterparty whose identity is genuinely
                       unknown, not a placeholder for one.
                     </p>
-                    <ul className="mt-3 flex flex-wrap gap-1.5">
-                      {CLASSES.map((c) => (
-                        <li
-                          key={c}
-                          className="border border-rule px-2 py-1 font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint"
-                        >
-                          {c}
-                        </li>
-                      ))}
-                      <li className="border border-rule-strong px-2 py-1 font-mono text-label-s uppercase tracking-[0.14em] text-ink">
-                        UNCLASSIFIED
-                      </li>
-                    </ul>
+                    {/*
+                      These were list items styled like controls, which is the
+                      worst of both: they invited a click and did nothing. They
+                      are links now, and every surface on the page reads the
+                      dataset they select.
+                    */}
+                    <div className="mt-3">
+                      <ChipGroup label="Flow class">
+                        <ChipLink href={`/flows?w=${window}`} active={flowFilter === null} count={allEdges.length}>
+                          ALL
+                        </ChipLink>
+                        {FLOW_CLASSES.map((c) => (
+                          <ChipLink
+                            key={c}
+                            // Clicking the active chip again clears it.
+                            href={flowFilter === c ? `/flows?w=${window}` : `/flows?w=${window}&flow=${c.toLowerCase()}`}
+                            active={flowFilter === c}
+                            count={classCounts[c]}
+                          >
+                            {c}
+                          </ChipLink>
+                        ))}
+                      </ChipGroup>
+                    </div>
                     <p className="label-s mt-3 normal-case tracking-[0.02em] text-ink-faint">
                       UNKNOWN is preferred to a wrong label.
                     </p>

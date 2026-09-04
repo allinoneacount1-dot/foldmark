@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Shell, Split, PageHead } from "@/components/layout/Frame";
 import { ClassificationPipeline } from "@/components/intelligence/ClassificationPipeline";
+import { PROTOCOL_CATEGORIES, parseCategory, buildContractIndex, categoryOf } from "@/lib/flow-classification";
 import { Panel, PanelHeader, Methodology, StateTag } from "@/components/ui/primitives";
+import { ChipLink, ChipGroup } from "@/components/ui/controls";
 import { Ledger, LedgerRow, LedgerCell, type LedgerColumn } from "@/components/ui/Ledger";
 import { Figure } from "@/components/ui/Figure";
 import { getPulse, type Pulse } from "@/lib/chain";
@@ -32,7 +34,14 @@ const CANDIDATE_COLUMNS: LedgerColumn[] = [
   { key: "class", label: "CLASSIFICATION", width: "minmax(130px, 1fr)", align: "right", hideBelow: "md" },
 ];
 
-export default async function ProtocolsPage() {
+export default async function ProtocolsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ category?: string }>;
+}) {
+  const params = await searchParams;
+  /** In the URL so it survives a refresh and can be shared. */
+  const categoryFilter = parseCategory(params.category);
   const now = await requestNow();
   const [protocols, contracts, assetsResult, activity, pulse] = await Promise.all([
     getProtocols(),
@@ -56,7 +65,33 @@ export default async function ProtocolsPage() {
     .sort((a, b) => b.counterparties - a.counterparties || b.transfers - a.transfers)
     .slice(0, 12);
 
-  const hasRegistry = protocols.rows.length > 0;
+  /**
+   * One filtered dataset for the registry below and the counts on the chips.
+   *
+   * A protocol's category comes from the contracts registry — what its
+   * contracts were identified as — never from its name. UNCLASSIFIED is a real
+   * category here and selects protocols whose contracts nothing has identified.
+   */
+  const categoryByProtocol = new Map<string, string>();
+  for (const c of contracts.rows) {
+    if (!c.protocol_id) continue;
+    const kind = buildContractIndex([c]).get(c.address.toLowerCase()) ?? null;
+    if (kind) categoryByProtocol.set(c.protocol_id, categoryOf(kind));
+  }
+
+  const categoryOfProtocol = (id: string) => categoryByProtocol.get(id) ?? "UNCLASSIFIED";
+
+  const categoryCounts: Record<string, number> = {};
+  for (const row of protocols.rows) {
+    const c = categoryOfProtocol(row.id);
+    categoryCounts[c] = (categoryCounts[c] ?? 0) + 1;
+  }
+
+  const visibleProtocols = categoryFilter
+    ? protocols.rows.filter((row) => categoryOfProtocol(row.id) === categoryFilter)
+    : protocols.rows;
+
+  const hasRegistry = visibleProtocols.length > 0;
   const hasCandidates = candidates.length > 0;
   const hasContracts = contracts.rows.length > 0;
 
@@ -75,7 +110,7 @@ export default async function ProtocolsPage() {
               surface="protocol"
               /* 0 VERIFIED is a claim about the chain, and it is only ours to
                  make once the registry has actually answered. */
-              label={hasRegistry ? `${integer(protocols.rows.length)} VERIFIED` : undefined}
+              label={hasRegistry ? `${integer(visibleProtocols.length)} VERIFIED` : undefined}
             />
           }
         />
@@ -114,21 +149,28 @@ export default async function ProtocolsPage() {
                   </div>
                 ))}
               </dl>
+              {/*
+                These were list items styled like controls — they invited a
+                click and did nothing. They filter the registry below now, and
+                the selection lives in the URL so it survives a refresh.
+              */}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-rule px-4 py-3">
-                <span className="label-s shrink-0 text-ink-dim">CATEGORIES</span>
-                <ul className="flex flex-wrap gap-1.5">
-                  {CATEGORIES.map((c) => (
-                    <li
+                <ChipGroup label="Category">
+                  <ChipLink href="/protocols" active={categoryFilter === null} count={protocols.rows.length}>
+                    ALL
+                  </ChipLink>
+                  {PROTOCOL_CATEGORIES.map((c) => (
+                    <ChipLink
                       key={c}
-                      className="border border-rule px-2 py-1 font-mono text-label-s uppercase tracking-[0.14em] text-ink-faint"
+                      // Clicking the active chip again clears the filter.
+                      href={categoryFilter === c ? "/protocols" : `/protocols?category=${c.toLowerCase()}`}
+                      active={categoryFilter === c}
+                      count={categoryCounts[c] ?? 0}
                     >
                       {c}
-                    </li>
+                    </ChipLink>
                   ))}
-                  <li className="border border-rule-strong px-2 py-1 font-mono text-label-s uppercase tracking-[0.14em] text-ink">
-                    UNCLASSIFIED
-                  </li>
-                </ul>
+                </ChipGroup>
               </div>
               <p className="label-s border-t border-rule-faint px-4 py-2 normal-case tracking-[0.02em] text-ink-faint">
                 UNCLASSIFIED is one of these categories, not the absence of one. It is the correct and final answer for a
@@ -155,7 +197,7 @@ export default async function ProtocolsPage() {
           <h2 className="label mb-3 border-b border-rule pb-2.5 text-ink-muted">VERIFIED REGISTRY</h2>
           <Ledger columns={PROTOCOL_COLUMNS} caption={`Protocols verified on ${CHAIN.name}`} minWidth={620}>
             {hasRegistry ? (
-              protocols.rows.map((p) => (
+              visibleProtocols.map((p) => (
                 <LedgerRow key={p.id} columns={PROTOCOL_COLUMNS} href={`/protocol/${p.id}`}>
                   <LedgerCell column={PROTOCOL_COLUMNS[0]}>
                     <span className="font-mono text-data text-ink">{p.name}</span>
@@ -418,9 +460,6 @@ const STAGES = [
     detail: "Only then does it appear in the registry, and only then may a flow through it be classified.",
   },
 ] as const;
-
-/** Product vocabulary, not an observation: the categories a protocol may hold. */
-const CATEGORIES = ["DEX", "LENDING", "BRIDGE", "ORACLE", "INFRASTRUCTURE"] as const;
 
 /** The protocol page, as a shell: every field, and the one source it reads. */
 const INSPECTOR_FIELDS: ReadonlyArray<readonly [string, string]> = [
