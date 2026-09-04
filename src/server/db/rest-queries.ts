@@ -169,3 +169,91 @@ export async function restCursor(): Promise<{ lastProcessedBlock: number | null;
     updatedAt: (row.updated_at as string | null) ?? null,
   };
 }
+
+/* ------------------------------------------------------------------ market */
+
+/** One provider-observed market for an asset, as persisted by enrichment. */
+export type DexMarket = {
+  pairAddress: string;
+  pairName: string;
+  venue: string;
+  priceUsd: number;
+  side: "base" | "quote";
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+};
+
+export type AssetMarketSnapshot = {
+  /** MATCHED means the provider answered with pools for this exact contract. */
+  status: "MATCHED" | "NO_MATCH" | "UNCHECKED";
+  provider: string | null;
+  network: string | null;
+  /** The featured market. A selection by depth, never an average. */
+  primary: DexMarket | null;
+  markets: DexMarket[];
+  observedAt: string | null;
+};
+
+const UNCHECKED: AssetMarketSnapshot = {
+  status: "UNCHECKED",
+  provider: null,
+  network: null,
+  primary: null,
+  markets: [],
+  observedAt: null,
+};
+
+function toMarket(raw: Record<string, unknown>): DexMarket | null {
+  const price = Number(raw.price_usd);
+  const pair = String(raw.pair_address ?? "");
+  if (!pair || !Number.isFinite(price) || price <= 0) return null;
+  const liquidity = Number(raw.liquidity_usd);
+  const volume = Number(raw.volume_24h_usd);
+  return {
+    pairAddress: pair,
+    pairName: String(raw.pair_name ?? ""),
+    venue: String(raw.venue ?? "unknown"),
+    priceUsd: price,
+    side: raw.side === "quote" ? "quote" : "base",
+    liquidityUsd: Number.isFinite(liquidity) ? liquidity : null,
+    volume24hUsd: Number.isFinite(volume) ? volume : null,
+  };
+}
+
+/**
+ * Market observations for one asset.
+ *
+ * Read from what enrichment persisted; this never calls a provider. A hundred
+ * readers of an asset page cost zero provider requests, and everyone sees the
+ * same observation with the same timestamp on it.
+ *
+ * UNCHECKED and NO_MATCH are different answers and stay different: one means
+ * nobody has asked yet, the other means the provider was asked and reported no
+ * market for this exact contract.
+ */
+export async function restAssetMarket(assetId: string): Promise<AssetMarketSnapshot> {
+  const rows = await selectRows<Record<string, unknown>>(
+    "asset_metadata",
+    `select=metadata_json,observed_at&asset_id=eq.${encodeURIComponent(assetId)}&limit=1`,
+  );
+  const row = rows?.[0];
+  if (!row) return UNCHECKED;
+
+  const market = (row.metadata_json as { market?: Record<string, unknown> } | null)?.market;
+  if (!market) return UNCHECKED;
+
+  const status = market.mapping_status === "MATCHED" ? "MATCHED" : market.mapping_status === "NO_MATCH" ? "NO_MATCH" : "UNCHECKED";
+  const list = Array.isArray(market.markets) ? market.markets : [];
+  const markets = list
+    .map((m) => toMarket(m as Record<string, unknown>))
+    .filter((m): m is DexMarket => m !== null);
+
+  return {
+    status,
+    provider: (market.provider as string | null) ?? null,
+    network: (market.network as string | null) ?? null,
+    primary: market.primary ? toMarket(market.primary as Record<string, unknown>) : null,
+    markets,
+    observedAt: (row.observed_at as string | null) ?? null,
+  };
+}

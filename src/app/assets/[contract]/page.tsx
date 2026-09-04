@@ -39,6 +39,8 @@ import {
 } from "@/lib/data-state";
 import { presentMissing, type Surface } from "@/lib/presentation-state";
 import { referenceMarketFor } from "@/config/reference-markets";
+import { DexMarkets } from "@/components/market/DexMarkets";
+import { restAssetMarket } from "@/server/db/rest-queries";
 import { blockLabel, compact, integer, isAddress, relativeTime, shortAddress } from "@/lib/format";
 import { ASSET_TYPE_LABEL, CHAIN, WINDOWS, type FlowWindow } from "@/config/site";
 
@@ -84,6 +86,13 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
   if (!isAddress(contract)) notFound();
 
   const asset = await getAssetByAddress(contract);
+  /**
+   * Market observations, read from what enrichment persisted.
+   *
+   * Never a provider call from a page render: readers share one observation
+   * rather than each producing a request, and everyone sees the same timestamp.
+   */
+  const dexMarket = asset ? await restAssetMarket(asset.id) : null;
   const now = await requestNow();
 
   const [indexer, activity24h] = await Promise.all([getIndexerStatus(), getWindowActivity("24H", now)]);
@@ -454,6 +463,8 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
             }
             right={
               <div className="flex flex-col gap-6">
+                {dexMarket ? <DexMarkets market={dexMarket} /> : null}
+
                 <Panel>
                   <PanelHeader title="CONTRACT" />
                   <div className="px-4 py-3">
