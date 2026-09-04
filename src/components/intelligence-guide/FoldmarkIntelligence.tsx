@@ -7,7 +7,6 @@ import { IntelligencePanel } from "@/components/intelligence-guide/IntelligenceP
 import type { Turn } from "@/components/intelligence-guide/IntelligenceMessage";
 import { ask, answerById } from "@/lib/intelligence/engine";
 import { greetingFor } from "@/lib/intelligence/greeting";
-import { contextSnapshot } from "@/lib/intelligence/context";
 import { entryById } from "@/lib/intelligence/knowledge";
 import type { PageContext, SessionContext } from "@/lib/intelligence/types";
 
@@ -120,7 +119,15 @@ export function FoldmarkIntelligence() {
         const res = await fetch("/api/intelligence", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ question, context: contextSnapshot(page) }),
+          /**
+           * The browser sends WHERE the reader is, never WHAT is true there.
+           *
+           * Route and query string only. Every measurement in the prompt is
+           * resolved on the server from FOLDMARK's own index, so a crafted
+           * request cannot put a figure in front of the model and have it
+           * repeated back as an observation.
+           */
+          body: JSON.stringify({ question, page: { pathname: page.pathname, params: page.params } }),
           signal: controller.signal,
         });
         if (!res.ok || !res.body) return false;

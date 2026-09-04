@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { reasoningConfig, streamAnswer } from "@/lib/intelligence/providers/openrouter";
 import { isInjectionAttempt, isSecretRequest, SECRET_RESPONSE, INJECTION_RESPONSE } from "@/lib/intelligence/fallback";
+import { contextSnapshot } from "@/lib/intelligence/context";
+import { liveContext } from "@/server/intelligence/live-context";
 
 /**
  * The reasoning endpoint.
@@ -72,8 +74,51 @@ function textResponse(body: string, status = 200): Response {
   return new Response(body, { status, headers: TEXT_HEADERS });
 }
 
+const MAX_PATH_LENGTH = 200;
+const MAX_PARAM_LENGTH = 64;
+
+/**
+ * A pathname the reader could actually be on.
+ *
+ * Anything else becomes "/". This is not defence against a malformed URL — it
+ * is defence against a sentence. The pathname is interpolated into the model's
+ * prompt, so a caller who could put arbitrary prose in this field could write
+ * instructions there, and a caller who could put arbitrary length in it could
+ * push the real state out of the context window.
+ */
+export function safePath(value: unknown): string {
+  if (typeof value !== "string") return "/";
+  const path = value.trim();
+  if (!path.startsWith("/") || path.length > MAX_PATH_LENGTH) return "/";
+  return /^[/A-Za-z0-9._~-]*$/.test(path) ? path : "/";
+}
+
+/**
+ * The four filters the product reads from the query string, and nothing else.
+ *
+ * An unknown key is dropped rather than passed through: the prompt states the
+ * reader's filters as fact, and an arbitrary key/value pair would be an
+ * arbitrary fact.
+ */
+const PARAM_KEYS = ["w", "category", "flow", "type"] as const;
+
+export function safeParams(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!value || typeof value !== "object") return out;
+  const source = value as Record<string, unknown>;
+  for (const key of PARAM_KEYS) {
+    const raw = source[key];
+    if (typeof raw !== "string") continue;
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.length > MAX_PARAM_LENGTH) continue;
+    if (!/^[A-Za-z0-9_-]+$/.test(trimmed)) continue;
+    out[key] = trimmed;
+  }
+  return out;
+}
+
 export async function POST(req: Request) {
-  let payload: { question?: unknown; context?: unknown };
+  let payload: { question?: unknown; page?: unknown };
   try {
     payload = await req.json();
   } catch {
@@ -96,12 +141,37 @@ export async function POST(req: Request) {
 
   if (throttled(clientKey(req))) return textResponse("", 429);
 
-  const context =
-    payload.context && typeof payload.context === "object"
-      ? (payload.context as Record<string, unknown>)
-      : undefined;
+  /**
+   * The reader supplies a LOCATION. The server supplies the FACTS.
+   *
+   * Nothing measured is accepted from the browser. The request carries a
+   * pathname and a filter set; every figure that reaches the model is resolved
+   * here, from FOLDMARK's own index, on this request. A caller who posts
+   * `indexed_transfers: 9000000` gets it discarded rather than quoted back to
+   * them as an observation — which is the failure this product exists to avoid,
+   * arriving through the one endpoint that talks to a model.
+   */
+  const page = (payload.page ?? {}) as Record<string, unknown>;
+  const pathname = safePath(page.pathname);
+  const params = safeParams(page.params);
 
-  const result = await streamAnswer(question, context, req.signal);
+  /**
+   * A database that will not answer must not stop the guide answering.
+   *
+   * The route facts are derived from the URL and always available; the measured
+   * half is best-effort. Losing it means the model reasons about structure
+   * without figures, which is a smaller failure than no reply at all.
+   */
+  let live: Record<string, unknown> = {};
+  try {
+    live = await liveContext(pathname, params);
+  } catch {
+    live = { index_status: "UNAVAILABLE — the index could not be read on this request" };
+  }
+
+  const context = { ...contextSnapshot({ pathname, params }), ...live };
+
+  const result = await streamAnswer(question, { pathname, params }, context, req.signal);
 
   /**
    * A provider failure returns an empty 204 rather than an error message.
