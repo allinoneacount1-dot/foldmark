@@ -105,8 +105,13 @@ if (!String(name).toLowerCase().includes(STOCK_TOKEN_NAME_MARKER)) continue;  //
                 activity across every window.
               </>,
               <>
-                <strong className="text-ink">Withheld</strong>: price — no oracle is wired to chain {CHAIN.id}; holders —
-                requires full-history balance reconstruction; liquidity and markets — require a venue registry.
+                <strong className="text-ink">Observed from markets</strong>: DEX_SPOT price, per-pool liquidity and 24h
+                volume, from pools holding the exact contract. No oracle is involved; chain {CHAIN.id} has none.
+              </>,
+              <>
+                <strong className="text-ink">Withheld</strong>: holders — requires full-history balance reconstruction;
+                portfolio value — requires balances the head-following index never saw; a per-window price series — a
+                transfer is valued only by an observation at or before it, and most have none.
               </>,
               <>
                 <strong className="text-ink">Not implemented</strong>: multiplier and corporate-action adjustment. No

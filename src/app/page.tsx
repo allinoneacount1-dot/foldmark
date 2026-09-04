@@ -504,8 +504,9 @@ function FlowEditorial() {
       <div className="mt-6 border border-rule">
         <Methodology>
           An edge is a directed pair of addresses that exchanged a specific asset inside the window. Value is the sum of
-          transfer amounts in token units, at the asset&apos;s own decimals. Nothing is converted to a currency, because
-          no price oracle is wired to chain {CHAIN.id}.
+          transfer amounts in token units, at the asset&apos;s own decimals. Nothing here is converted to a currency:
+          valuing a past transfer needs a price observed at or before it, and observations began recently, so most
+          transfers have none. Converting them with the current price would describe a market that did not exist.
         </Methodology>
       </div>
     </div>

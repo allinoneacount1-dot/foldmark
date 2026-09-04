@@ -107,7 +107,7 @@ export const FABRIC_ENTRIES: Entry[] = [
     shortAnswer:
       "Six classes — asset, venue, protocol, oracle, infrastructure, address — each with its own shape and colour. Shape carries the class; colour only reinforces it.",
     detail:
-      "The mapping from registry kind to visual class is fixed: dex_pool becomes venue, lending_market becomes protocol, bridge becomes protocol, oracle becomes oracle, infrastructure becomes infrastructure, and anything unknown becomes address.\n\nA bridge is drawn with the protocol shape rather than getting a shape of its own. It is a counterparty you send to and receive from, which is what the protocol shape already says. The distinction survives where it matters: flow classification still separates BRIDGE_IN from BRIDGE_OUT.\n\nBecause the registry is empty in production today, every non-asset node on a measured map would draw as an address. That is the rule working, not a gap in the drawing.",
+      "The mapping from registry kind to visual class is fixed: dex_pool becomes venue, lending_market becomes protocol, bridge becomes protocol, oracle becomes oracle, infrastructure becomes infrastructure, and anything unknown becomes address.\n\nA bridge is drawn with the protocol shape rather than getting a shape of its own. It is a counterparty you send to and receive from, which is what the protocol shape already says. The distinction survives where it matters: flow classification still separates BRIDGE_IN from BRIDGE_OUT.\n\nWhere the registry has no entry for a node, it draws as an address on a measured map. That is the rule working, not a gap in the drawing.",
     followups: ["fabric.node_address", "fabric.node_colours", "fabric.node_venue", "protocols.registry"],
     entities: ["FABRIC", "ASSET", "VENUE", "PROTOCOL", "ORACLE", "INFRASTRUCTURE", "ADDRESS"],
     routes: ["/fabric"],
@@ -644,9 +644,9 @@ export const FABRIC_ENTRIES: Entry[] = [
     ],
     keywords: ["zero", "categories", "chips", "empty", "registry", "unclassified"],
     answer:
-      "The contracts registry is empty in production today, because no database is connected. Classification reads from that registry and nothing else.\n\nSo every address stays unidentified, every observable flow classifies as UNCLASSIFIED, every category chip counts zero, and selecting a category or a flow class selects nothing.\n\nThat is the correct outcome of the rules rather than a broken control. The alternative would be assigning categories on appearance, which would put a claim on screen that no source made.\n\nSeparately, three flow class names are reserved and never assigned by the current classifier at all: LP_DEPOSIT, LP_WITHDRAW and LEND. Their chips would count zero even with a populated registry.",
+      "Classification reads from the contracts registry and nothing else. A chip counts only addresses that registry identifies, so a category holding no registered contracts counts zero, and selecting it selects nothing.\n\nWhere the registry has no entry for an address, that address stays unidentified and its flows classify as UNCLASSIFIED. How many entries it holds is a reading, not a definition, and the protocols page reports it.\n\nThat is the correct outcome of the rules rather than a broken control. The alternative would be assigning categories on appearance, which would put a claim on screen that no source made.\n\nSeparately, three flow class names are reserved and never assigned by the current classifier at all: LP_DEPOSIT, LP_WITHDRAW and LEND. Their chips would count zero even with a populated registry.",
     shortAnswer:
-      "The contracts registry is empty, so every address stays unidentified and every flow classifies as UNCLASSIFIED. The chips count zero, which is the honest outcome, not a bug.",
+      "A chip counts only what the contracts registry identifies. Addresses it has no entry for stay unidentified and their flows classify as UNCLASSIFIED, so those chips count zero — the honest outcome, not a bug.",
     followups: ["protocols.registry", "flows.unclassified", "flows.reserved_classes", "fabric.filters"],
     entities: ["UNCLASSIFIED", "FABRIC"],
     routes: ["/fabric"],

@@ -9,6 +9,7 @@ import {
   since,
 } from "@/lib/queries";
 import { WINDOWS, CHAIN, type FlowWindow } from "@/config/site";
+import { PRICE_ABSENT, LIQUIDITY_NOT_PER_ASSET, HOLDERS_WITHHELD } from "@/lib/market-copy";
 
 export const dynamic = "force-dynamic";
 
@@ -66,9 +67,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ contract
       : { transfers: 0, state: "NO ACTIVITY" },
     price: price
       ? { value: price.price, source: price.source, observed_at: price.observedAt }
-      : { state: "DATA UNAVAILABLE", reason: `No price oracle is wired to chain ${CHAIN.id}` },
-    liquidity: { state: "DATA UNAVAILABLE", reason: "No DEX pool identified on this chain" },
-    holders: { state: "DATA UNAVAILABLE", reason: "Holder counts require balance reconstruction over the full history" },
+      : { state: "DATA UNAVAILABLE", reason: PRICE_ABSENT },
+    liquidity: { state: "NOT APPLICABLE", reason: LIQUIDITY_NOT_PER_ASSET },
+    holders: { state: "DATA UNAVAILABLE", reason: HOLDERS_WITHHELD },
     // Amounts are in this asset's units, which is the only scope where a token
     // amount means anything.
     top_counterparties: peers.map((p) => {

@@ -31,13 +31,14 @@ export default function FlowClassificationPage() {
             times.
           </P>
           <Note tone="warn">
-            In this deployment the contracts registry is empty, so{" "}
-            <strong className="text-ink">every flow is returned UNCLASSIFIED</strong>. That is the honest state, and it
-            is shown as such on{" "}
+            A flow between two addresses the contracts registry has no entry for is returned{" "}
+            <strong className="text-ink">UNCLASSIFIED</strong> — not WALLET_TRANSFER, which would claim the registry was
+            consulted and found both sides ordinary. How much of a window that covers depends on what the registry
+            holds, and is shown on{" "}
             <Link href="/flows" className="text-ink underline-offset-4 hover:underline">
               the flow observatory
             </Link>{" "}
-            rather than hidden.
+            rather than asserted here.
           </Note>
         </DocSection>
 

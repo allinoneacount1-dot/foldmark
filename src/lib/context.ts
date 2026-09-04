@@ -18,6 +18,7 @@ import {
 } from "@/lib/queries";
 import { CHAIN, type FlowWindow } from "@/config/site";
 import { STATE_LABEL } from "@/lib/data-state";
+import { PRICE_ABSENT, LIQUIDITY_NOT_PER_ASSET } from "@/lib/market-copy";
 
 export type AssetContext = Record<string, unknown>;
 
@@ -59,8 +60,8 @@ export async function buildAssetContext(key: string, window: FlowWindow = "24H")
       : { state: STATE_LABEL[transfers.state === "UNAVAILABLE" ? "UNAVAILABLE" : "INDEXING"], transfers: 0 },
     price: price
       ? { state: "OK", value: price.price, currency: "USD", source: price.source, observed_at: price.observedAt }
-      : { state: "DATA UNAVAILABLE", reason: `No price oracle is wired to chain ${CHAIN.id}` },
-    liquidity: { state: "DATA UNAVAILABLE", reason: "No DEX pool identified on this chain" },
+      : { state: "DATA UNAVAILABLE", reason: PRICE_ABSENT },
+    liquidity: { state: "NOT APPLICABLE", reason: LIQUIDITY_NOT_PER_ASSET },
     net_flow: {
       state: "NOT APPLICABLE",
       reason: "Net flow is defined per address, not per token contract. See /api/v1/wallets/{address}.",

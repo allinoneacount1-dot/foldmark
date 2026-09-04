@@ -460,7 +460,9 @@ export default async function WalletPage({
                     Every figure is folded at request time from transfers where this address appears as sender or
                     recipient inside the {window} window. Amounts are token units at each asset&apos;s own decimals and
                     are not summed across assets, because adding units of different tokens would be meaningless.
-                    Portfolio value in a currency is withheld while no price oracle is wired to chain {CHAIN.id}.
+                    Portfolio value is withheld because it needs balances, and the index follows the head of the chain
+                    and never observed this address&apos;s opening position. What is shown is net movement in a window;
+                    multiplying that by a price would look like a valuation and would not be one.
                   </Methodology>
                 </div>
               </div>

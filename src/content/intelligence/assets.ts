@@ -10,9 +10,11 @@ import type { Entry } from "@/lib/intelligence/types";
  * matrix, the counterparty ledger and the asset graph should be read.
  *
  * Every answer below states what FOLDMARK defines or what a page renders. None
- * of them reports an observation: no database is connected in this deployment,
- * so no figure in this domain is quoted as measured, and nothing is described
- * as verified.
+ * of them quotes a measurement, and that is a rule rather than a limitation of
+ * the moment: a fixed answer that names a figure is a figure that will be wrong
+ * later. Readings belong to the interface and to the live state resolved per
+ * request. Nothing here is described as verified either, because verification
+ * needs an authoritative issuer source confirming the exact contract.
  */
 export const ASSETS_ENTRIES: Entry[] = [
   {
@@ -521,9 +523,9 @@ export const ASSETS_ENTRIES: Entry[] = [
     ],
     keywords: ["protocol", "exposure", "registry", "classification", "venue", "withheld"],
     answer:
-      "Protocol exposure would describe which registered protocols an asset moves through. It requires contract classification, and the protocols registry is empty, so it is withheld rather than estimated.\n\nNothing is promoted to a protocol by behaviour alone. An address that receives a great deal of an asset is an address that receives a great deal of an asset; volume is not evidence of what a contract is.\n\nWith no protocol identified, an asset's counterparties remain addresses and its flows remain unclassified. That is the correct outcome of the rules rather than a gap in the page.",
+      "Protocol exposure would describe which registered protocols an asset moves through. It requires contract classification, so it is reported only for counterparties the contracts registry identifies, and withheld rather than estimated for the rest.\n\nNothing is promoted to a protocol by behaviour alone. An address that receives a great deal of an asset is an address that receives a great deal of an asset; volume is not evidence of what a contract is.\n\nWhere no protocol is identified, an asset's counterparties remain addresses and its flows remain unclassified. That is the correct outcome of the rules rather than a gap in the page.",
     shortAnswer:
-      "Which registered protocols an asset moves through. The protocols registry is empty, so the metric is withheld rather than inferred from transaction shape or volume.",
+      "Which registered protocols an asset moves through. It covers only counterparties the registry identifies, and is withheld rather than inferred from transaction shape or volume.",
     followups: ["protocols.registry", "protocols.categories", "flows.unclassified", "methodology.no_inference_from_behaviour"],
     actions: [{ label: "OPEN PROTOCOLS", href: "/protocols" }],
     entities: ["PROTOCOL_EXPOSURE"],
@@ -546,7 +548,7 @@ export const ASSETS_ENTRIES: Entry[] = [
     ],
     keywords: ["withheld", "holders", "price", "markets", "net", "flow", "missing"],
     answer:
-      "Five metrics are named and withheld rather than shown empty. Holders requires reconstructing balances from the full transfer history, not a window. Liquidity requires DEX pool contracts to be identified on this chain. Markets requires a venue registry, and none is verified here.\n\nProtocol exposure requires contract classification, and the protocols registry is empty. Net flow is not withheld for want of data at all — it is defined per address, because a transfer moves balance between holders without changing supply, so a net flow per token contract would describe nothing.\n\nPrice follows the same principle. No oracle is wired to this chain, so the registry's price column reads NO FEED rather than borrowing a number from somewhere adjacent.",
+      "Five metrics are named and withheld rather than shown empty. Holders requires reconstructing balances from the full transfer history, not a window. Liquidity and markets are read per pool, from pools a market provider returns for the exact contract; they are never summed into a single figure per asset, because depth in one market does not make another market deep.\n\nProtocol exposure requires contract classification and covers only counterparties the registry identifies. Net flow is not withheld for want of data at all — it is defined per address, because a transfer moves balance between holders without changing supply, so a net flow per token contract would describe nothing.\n\nPrice follows the same principle. FOLDMARK holds a DEX_SPOT observation only where a pool holding the exact contract was found; where it has none, the registry's price column reads NO FEED rather than borrowing a number from somewhere adjacent. No oracle is involved — this chain has none.",
     shortAnswer:
       "Holders, liquidity, markets and protocol exposure are named and withheld until the evidence exists. Net flow is undefined per contract by design, and price has no oracle on this chain.",
     detail:

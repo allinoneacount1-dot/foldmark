@@ -480,7 +480,7 @@ export const LIMITATIONS: { title: string; detail: string }[] = [
   },
   {
     title: "No flow classification",
-    detail: "The contracts registry is empty, so no counterparty can be identified as a DEX, lending market or bridge. Every flow is returned as UNCLASSIFIED.",
+    detail: "A counterparty the contracts registry has no entry for is not identified as a DEX, lending market or bridge, and a flow across it is returned as UNCLASSIFIED.",
   },
   {
     title: "No protocol coverage",

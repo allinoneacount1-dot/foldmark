@@ -1,6 +1,43 @@
 import { CHAIN } from "@/config/site";
 
 /**
+ * Why a figure is withheld, said once.
+ *
+ * These were written inline at each site, and every one of them named the wrong
+ * reason. "No price oracle is wired to chain 4663" is true — there is no
+ * on-chain oracle — but it was used as the reason a PRICE was missing, and
+ * FOLDMARK has held DEX_SPOT prices since market enrichment shipped. A reader
+ * given a true sentence as the answer to a different question learns something
+ * false: that the product has no prices at all.
+ *
+ * The rule these hold to: name the reason THIS figure is absent, not a
+ * neighbouring fact that happens to be true.
+ */
+
+/** No observation for THIS contract. Other contracts may well be priced. */
+export const PRICE_ABSENT =
+  "No market observation has been recorded for this contract. FOLDMARK prices an asset only from a pool holding that exact contract, so an absent price here is about this address, not about the chain.";
+
+/**
+ * Depth exists, but not as one number per asset.
+ *
+ * Summing pools would claim a tradeable depth that no single market offers,
+ * which is the more expensive lie than saying nothing.
+ */
+export const LIQUIDITY_NOT_PER_ASSET =
+  "Liquidity is a property of a pool, not of an asset. Pools holding this contract are reported individually at /api/v1/market/{contract}; they are never summed, because depth in one market does not make another market deep.";
+
+/**
+ * Value needs balances, and head-following never saw the opening balance.
+ */
+export const PORTFOLIO_VALUE_WITHHELD =
+  "A portfolio value needs balances, and FOLDMARK does not hold them: the index follows the head of the chain and never observed these addresses' opening positions, so what it sees is net movement over a window. Multiplying a movement by a price would produce a number that looks like a valuation and is not one.";
+
+/** A holder count needs every transfer since the token existed. */
+export const HOLDERS_WITHHELD =
+  "Holder counts require balance reconstruction over the full history. The index follows the head of the chain and does not reach the first transfer, so any count it produced would be a count of addresses seen recently, not of holders.";
+
+/**
  * Sentences about what FOLDMARK is not showing, derived from what it holds.
  *
  * These lived as constants on the asset passport, and the constants went stale

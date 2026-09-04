@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAssets, getIndexerStatus, getTransfersSince, since } from "@/lib/queries";
 import { fromBaseUnits, isAddress } from "@/lib/format";
 import { WINDOWS, CHAIN, type FlowWindow } from "@/config/site";
+import { PORTFOLIO_VALUE_WITHHELD } from "@/lib/market-copy";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +68,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ address:
       transfers: transfers.rows.length,
       unit: "token units, not aggregated across assets",
     },
-    portfolio_value: { state: "DATA UNAVAILABLE", reason: `No price oracle is wired to chain ${CHAIN.id}` },
+    portfolio_value: { state: "NOT APPLICABLE", reason: PORTFOLIO_VALUE_WITHHELD },
     asset_exposure: [...exposure.entries()]
       .map(([id, e]) => {
         const asset = byId.get(id);

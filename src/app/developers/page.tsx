@@ -108,7 +108,10 @@ export default async function DevelopersPage() {
                   <PanelHeader title="CONVENTIONS" />
                   <ul className="flex flex-col gap-2.5 px-4 py-3 text-body-s text-ink-muted">
                     <li>Amounts are token units at each asset&apos;s own decimals, never summed across assets.</li>
-                    <li>No response converts to a currency: no price oracle is wired to chain {CHAIN.id}.</li>
+                    <li>
+                      No response converts an amount to a currency. USD appears only as an observed DEX_SPOT price for a
+                      contract, never as a token amount multiplied by one.
+                    </li>
                     <li>Net flow appears per address only, never per token contract.</li>
                     <li>An unknown relationship is returned as UNCLASSIFIED, never guessed.</li>
                     <li>A 503 from /network means the chain RPC was unreachable, not that the chain is idle.</li>

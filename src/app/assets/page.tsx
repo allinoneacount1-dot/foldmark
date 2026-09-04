@@ -306,8 +306,10 @@ export default async function AssetsPage({
             <Methodology label="COLUMN DEFINITIONS">
               <ul className="flex flex-col gap-1.5">
                 <li>
-                  <strong className="text-ink">PRICE</strong> — most recent stored price observation. No oracle is wired
-                  to chain {CHAIN.id} yet, so this reads NO FEED for every asset.
+                  <strong className="text-ink">PRICE</strong> — the most recent stored DEX_SPOT observation, taken from
+                  a pool holding that exact contract. It is one pool at one moment, not a consensus valuation, and no
+                  oracle is involved: chain {CHAIN.id} has none. An asset with no pool reads NO FEED, which is a
+                  statement about that contract rather than about the chain.
                 </li>
                 <li>
                   <strong className="text-ink">TRANSFERS</strong> — count of ERC-20 Transfer logs for the contract inside
