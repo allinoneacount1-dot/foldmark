@@ -5,6 +5,7 @@ import { chainHead, safeHead } from "@/server/ingest/transport";
 import { restCursor } from "@/server/db/rest-queries";
 import { supabaseConfigured, countRows } from "@/server/db/supabase";
 import { cronAuthorized } from "@/server/cron/auth";
+import { databaseSize } from "@/server/db/storage";
 
 /**
  * The hosted ingestion endpoint.
@@ -47,12 +48,13 @@ export function ingestionHealth(lastSuccessAt: string | null, lagBlocks: number 
 
 /** Read-only. Safe to expose: no secrets, only what the indexer has done. */
 async function status() {
-  const [head, safe, cursor, transfers, assets] = await Promise.all([
+  const [head, safe, cursor, transfers, assets, storage] = await Promise.all([
     chainHead(),
     safeHead(),
     restCursor(),
     countRows("transfers"),
     countRows("assets"),
+    databaseSize(),
   ]);
 
   const lag = head !== null && cursor.lastProcessedBlock !== null ? head - cursor.lastProcessedBlock : null;
@@ -83,6 +85,20 @@ async function status() {
      * reason.
      */
     coverage_mode: "HEAD_FOLLOWING_PARTIAL",
+    /**
+     * Reported beside ingestion health because it is the thing most likely to
+     * end it. This deployment ingests continuously against a fixed free-tier
+     * ceiling, and a database that fills up stops accepting writes — after
+     * which a stalled index is indistinguishable from a quiet chain unless
+     * something says how full the disk is.
+     */
+    storage: {
+      bytes: storage.bytes,
+      limit_bytes: storage.limitBytes,
+      used_fraction: storage.usedFraction === null ? null : Number(storage.usedFraction.toFixed(4)),
+      largest_relations: storage.largest,
+      note: storage.note,
+    },
   };
 }
 

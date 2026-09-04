@@ -35,17 +35,22 @@ const INDEX = { source: "FOLDMARK indexer", method: "ERC-20 Transfer logs involv
 export async function generateMetadata({ params }: { params: Promise<{ address: string }> }): Promise<Metadata> {
   const { address } = await params;
   /**
-   * The 404 is decided here, before the body streams.
+   * A malformed address renders the not-found UI at HTTP 200, and that is
+   * documented framework behaviour rather than a defect here.
    *
-   * Calling notFound() from the component alone rendered the not-found UI with
-   * a 200 status: by the time it ran, the response had already been committed.
-   * A page that says NOT FOUND while answering 200 is one a crawler indexes and
-   * a client caches as real. Metadata resolves before the body, so the status
-   * set here is the one that ships.
+   * `notFound()` throws during render; by then the response has been committed
+   * as a streamed 200 and the status can no longer change. Next injects
+   * `<meta name="robots" content="noindex">`, which is what actually keeps a
+   * soft 404 out of search results. Returning a real 404 would mean deciding it
+   * in `proxy` before the render begins — which can only answer with a bare
+   * status and no page, trading a usable "Invalid address" screen for a code
+   * that nothing here reads. The JSON API is where status codes matter, and it
+   * already answers 400 for a malformed address.
+   *
+   * Left as a note because this looks like a bug every time someone finds it.
    */
-  if (!isAddress(address)) notFound();
   return {
-    title: `${shortAddress(address, 8, 6)} — wallet`,
+    title: isAddress(address) ? `${shortAddress(address, 8, 6)} — wallet` : "Invalid address",
     description: `Observed activity, exposure and counterparties for ${address} on ${CHAIN.name}.`,
   };
 }
