@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { Shell, Split, RailColumn, PageHead } from "@/components/layout/Frame";
+import { StructureChange } from "@/components/intelligence/StructureChange";
+import { flowIntelligence } from "@/server/flows/intelligence";
 import { Tape, TapeCell, TapeStatic } from "@/components/ui/Tape";
 import { Figure } from "@/components/ui/Figure";
 import { Panel, PanelHeader, Methodology, StateTag, AbsentValue, CoverageNote } from "@/components/ui/primitives";
@@ -87,6 +89,11 @@ export default async function DashboardPage({
 
   const assets = assetsResult.rows;
   const activityByAsset = foldByAsset(activity.rows, assets, window, now);
+  /**
+   * What moved against the equivalent window before this one. Descriptive only:
+   * both numbers behind every change are carried through to the reader.
+   */
+  const intel = await flowIntelligence(window, now);
   const edges = foldEdges(activity.rows, assets, 10);
   const graph = buildMarketGraph(activity.rows, assets, { limitAddresses: 7, limitAssets: 7 });
   const prices = await getLatestPrices(assets.map((a) => a.id));
@@ -250,6 +257,14 @@ export default async function DashboardPage({
           <TapeCapability capability={CAPABILITIES.addresses} />
         )}
       </Tape>
+
+      {intel.current.transfers > 0 || intel.previous.transfers > 0 ? (
+        <Shell>
+          <div className="mt-6">
+            <StructureChange intel={intel} />
+          </div>
+        </Shell>
+      ) : null}
 
       {/* ---- workspace: chain measurements, chart + intelligence rail -------- */}
       <Shell>
