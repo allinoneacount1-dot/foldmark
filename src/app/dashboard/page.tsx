@@ -4,17 +4,10 @@ import Link from "next/link";
 import { Shell, Split, RailColumn, PageHead } from "@/components/layout/Frame";
 import { Tape, TapeCell, TapeStatic } from "@/components/ui/Tape";
 import { Figure } from "@/components/ui/Figure";
-import {
-  Panel,
-  PanelHeader,
-  EmptyState,
-  Methodology,
-  StateTag,
-  AbsentValue,
-  CoverageNote,
-} from "@/components/ui/primitives";
+import { Panel, PanelHeader, Methodology, StateTag, AbsentValue, CoverageNote } from "@/components/ui/primitives";
 import { ChipLink, ChipGroup } from "@/components/ui/controls";
-import { MarketChart } from "@/components/charts/MarketChart";
+import { MarketChartPanel } from "@/components/charts/MarketChartPanel";
+import { ReferenceChart } from "@/components/charts/ReferenceChart";
 import { TopologyView } from "@/components/graph/TopologyView";
 import {
   CapitalFlowModule,
@@ -36,14 +29,17 @@ import {
   requestNow,
 } from "@/lib/queries";
 import { buildMarketGraph } from "@/lib/graph";
-import { measured, indexing, withFreshness, hasValue, type DataState } from "@/lib/data-state";
-import { present, isAbsent, type Surface } from "@/lib/presentation-state";
+import { withFreshness, hasValue, type DataState } from "@/lib/data-state";
+import { type Surface } from "@/lib/presentation-state";
+import { CAPABILITIES } from "@/lib/presentation-preview";
+import { activeEndpoint, getBlockTimes, lastRpcLatencyMs } from "@/server/market-data/providers/rpc";
 import { blockLabel, compact, integer, relativeTime, utcClock } from "@/lib/format";
 import { WINDOWS, ASSET_TYPE_LABEL, type FlowWindow, CHAIN } from "@/config/site";
 
 export const metadata: Metadata = {
   title: "Dashboard",
-  description: "Live market intelligence for Robinhood Chain: price, capital flow, network activity and market structure read together.",
+  description:
+    "Live market intelligence for Robinhood Chain: reference market, capital flow, network activity and market structure read together.",
 };
 
 export const revalidate = 30;
@@ -51,20 +47,24 @@ export const revalidate = 30;
 /**
  * The dashboard.
  *
- * Two kinds of fact share this page and they must never be confused with each
- * other. The chain link is read over RPC and does not depend on storage, so
- * chain id, chain head and the time that head was read are real on every render
- * and are presented as measured. Everything folded out of indexed transfers —
- * assets, flow, activity, structure — depends on the index, and when the index
- * has not reached it the slot holds an em dash and says, in the reader's terms,
- * what is being waited on.
+ * Three kinds of fact share this page and none may be mistaken for another.
  *
- * The layout does not collapse when the second kind is missing. A dashboard
- * that drops its chart, its rail and its ledger the moment there is nothing to
- * put in them reads as broken; one that keeps its structure and labels the
- * empty slots reads as an instrument that has not been fed yet. Every pending
- * region here is designed rather than absent, and not one of them contains a
- * figure that was not measured.
+ *   CHAIN        read over RPC, owes nothing to storage. Chain id, chain head,
+ *                block cadence and RPC round trip are real on every render, on
+ *                any deployment, and they are the loudest things here.
+ *   REFERENCE    the underlying instrument's own market, carried by TradingView.
+ *                A real, interactive chart with no database behind it. It is
+ *                never a FOLDMARK price and never fills a FOLDMARK field.
+ *   OBSERVED     folded out of indexed transfers. Present only where the index
+ *                reached; where it has not, the module says which part of the
+ *                system is running rather than printing a dash.
+ *
+ * That last move is the one worth naming. A metric with no measurement used to
+ * render an em dash and a status word, and a column of those reads as a broken
+ * backend. A capability line — CHAIN LISTENER ACTIVE, FLOW ENGINE READY — is
+ * true without a database, carries no digit, and cannot be mistaken for a
+ * figure. Nothing here is invented; the empty slots simply stopped pretending a
+ * number was about to land in them.
  */
 export default async function DashboardPage({
   searchParams,
@@ -101,13 +101,16 @@ export default async function DashboardPage({
 
   /**
    * The chain link. Read over RPC, independent of the database, so it is a real
-   * measurement on a deployment that has no storage at all — which is exactly
-   * why it is the first thing on the page and the only thing wearing the signal
-   * colour. It is the difference between a product that is waiting and one that
-   * is broken.
+   * measurement on a deployment with no storage at all — which is exactly why it
+   * leads the page and carries the only signal colour on it.
    */
   const link = indexer.chainHead;
   const linkLive = hasValue(link);
+
+  /** Two more measurements the chain gives for free, and neither is stored. */
+  const cadence = await measureCadence(linkLive ? link.value : null);
+  const latencyMs = lastRpcLatencyMs();
+  const rpcHost = endpointHost();
 
   /** No price row for an asset is a price not yet observed, not a price of zero. */
   const priceState: DataState = selectedPrice
@@ -116,15 +119,19 @@ export default async function DashboardPage({
       ? "UNAVAILABLE"
       : "INDEXING";
 
-  const registry = present(assetsResult.state, "registry");
   const drawn = graph.nodes.length > 0;
 
   /**
-   * A window whose state is not absent was genuinely covered, so its counts are
-   * measurements even when they are zero. When it is absent there is no count
-   * to report and the layer holds a dash — never a nought standing in for one.
+   * Whether the window was actually answered.
+   *
+   * EMPTY, PARTIAL and STALE all mean the index looked: those modules keep their
+   * measured copy, because "nothing moved in this window" is a finding. Only
+   * INDEXING and UNAVAILABLE mean nobody has looked yet, and that is the case
+   * where a metric rail has no business drawing metric furniture at all.
    */
-  const windowMeasured = !isAbsent(activity.state);
+  const windowAnswered = activity.state !== "INDEXING" && activity.state !== "UNAVAILABLE";
+  const railLive = activity.transfers > 0 || windowAnswered;
+  const showEvents = recent.rows.length > 0 || assets.length > 0;
 
   const qs = (next: Partial<{ w: string; asset: string }>) => {
     const sp = new URLSearchParams();
@@ -133,6 +140,29 @@ export default async function DashboardPage({
     if (asset) sp.set("asset", asset);
     return `/dashboard?${sp.toString()}`;
   };
+
+  /**
+   * The page's one status area.
+   *
+   * Every panel used to restate its own condition, so a visitor read the same
+   * sentence a dozen times down the page. The condition is stated here, once, in
+   * three segments — and nowhere else.
+   */
+  const status: StatusSegment[] = [
+    linkLive
+      ? {
+          label: "CHAIN LIVE",
+          value: cadence
+            ? `${blockLabel(link.value)} · ${cadenceLabel(cadence.secondsPerBlock)} BLOCKS`
+            : blockLabel(link.value),
+          tone: "live",
+        }
+      : { label: "CHAIN LINK", value: "NO ENDPOINT ANSWERED", tone: "off" },
+    { label: "REFERENCE MARKET", value: "TRADINGVIEW", tone: "ready" },
+    activity.transfers > 0
+      ? { label: "MARKET HISTORY", value: `${integer(activity.transfers)} TRANSFERS ${window}`, tone: "ready" }
+      : { label: "MARKET HISTORY", value: "PENDING", tone: "off" },
+  ];
 
   return (
     <>
@@ -143,7 +173,7 @@ export default async function DashboardPage({
           <PageHead
             kicker={`MARKET INTELLIGENCE · CHAIN ${CHAIN.id}`}
             title="Dashboard"
-            lede="Price, capital flow, network activity and market structure for Robinhood Chain, read in one place. The chain link is measured live over RPC; every other figure is computed from indexed chain data, or says what it is still waiting on."
+            lede="The chain link is measured live over RPC — head, cadence and round trip on every render. The reference market is the underlying instrument's own, carried by TradingView. Everything folded from indexed transfers appears as the index reaches it, and nothing is drawn that was not measured."
             aside={
               <ChipGroup label="Window">
                 {WINDOWS.map((w) => (
@@ -155,8 +185,12 @@ export default async function DashboardPage({
             }
           />
 
+          <div className="mt-6">
+            <StatusRail segments={status} />
+          </div>
+
           {activity.coverageNote ? (
-            <div className="mt-6 border border-rule">
+            <div className="mt-4 border border-rule">
               <CoverageNote note={activity.coverageNote} />
             </div>
           ) : null}
@@ -164,7 +198,7 @@ export default async function DashboardPage({
       </Shell>
 
       {/* ---- the tape: chain facts first, index facts after ----------------- */}
-      <Tape label="Chain link and index state">
+      <Tape label="Chain link and system state">
         <TapeStatic label="CHAIN" value={`${CHAIN.id} · ${CHAIN.name.toUpperCase()}`} />
         <TapeCell
           label="CHAIN HEAD"
@@ -174,147 +208,142 @@ export default async function DashboardPage({
           emphasis={linkLive}
         />
         {linkLive ? <TapeStatic label="HEAD READ" value={relativeTime(link.observedAt, now)} /> : null}
+        {cadence ? <TapeStatic label="BLOCK CADENCE" value={cadenceLabel(cadence.secondsPerBlock)} /> : null}
+        {latencyMs === null ? null : <TapeStatic label="RPC ROUND TRIP" value={`${integer(latencyMs)} MS`} />}
         <TapeStatic label="SESSION" value={utcClock(new Date(now).toISOString())} />
-        <TapeCell
-          label="INDEXED TO"
-          measurement={withFreshness(indexer.lastProcessedBlock, now)}
-          format={(v) => blockLabel(Number(v))}
-          surface="activity"
-        />
-        <TapeCell
-          label="LAG"
-          measurement={indexer.lagBlocks}
-          format={(v) => integer(Number(v))}
-          unit="BLOCKS"
-          surface="activity"
-        />
-        <TapeCell
-          label="ASSETS OBSERVED"
-          measurement={assetCount}
-          format={(v) => integer(Number(v))}
-          surface="registry"
-        />
-        <TapeCell
-          label={`TRANSFERS ${window}`}
-          measurement={
-            activity.transfers > 0
-              ? measured(activity.transfers, { source: "FOLDMARK indexer" }, { observedAt: indexer.updatedAt })
-              : indexing<number>({ source: "FOLDMARK indexer" })
-          }
-          format={(v) => integer(Number(v))}
-          surface="flow"
-        />
-        <TapeCell
-          label="ACTIVE ADDRESSES"
-          measurement={
-            activity.activeAddresses > 0
-              ? measured(activity.activeAddresses, { source: "FOLDMARK indexer" }, { observedAt: indexer.updatedAt })
-              : indexing<number>({ source: "FOLDMARK indexer" })
-          }
-          format={(v) => integer(Number(v))}
-          surface="activity"
-        />
+        {hasValue(indexer.lastProcessedBlock) ? (
+          <TapeCell
+            label="INDEXED TO"
+            measurement={withFreshness(indexer.lastProcessedBlock, now)}
+            format={(v) => blockLabel(Number(v))}
+            surface="activity"
+          />
+        ) : null}
+        {hasValue(indexer.lagBlocks) ? (
+          <TapeCell
+            label="LAG"
+            measurement={indexer.lagBlocks}
+            format={(v) => integer(Number(v))}
+            unit="BLOCKS"
+            surface="activity"
+          />
+        ) : null}
+        {hasValue(assetCount) ? (
+          <TapeCell
+            label="ASSETS OBSERVED"
+            measurement={assetCount}
+            format={(v) => integer(Number(v))}
+            surface="registry"
+          />
+        ) : (
+          <TapeCapability capability={CAPABILITIES.registry} />
+        )}
+        {activity.transfers > 0 ? (
+          <TapeStatic label={`TRANSFERS ${window}`} value={integer(activity.transfers)} />
+        ) : (
+          <TapeCapability capability={CAPABILITIES.transfers} />
+        )}
+        {activity.activeAddresses > 0 ? (
+          <TapeStatic label="ACTIVE ADDRESSES" value={integer(activity.activeAddresses)} />
+        ) : (
+          <TapeCapability capability={CAPABILITIES.addresses} />
+        )}
       </Tape>
 
-      {/* ---- workspace: layers, chart + intelligence rail -------------------- */}
+      {/* ---- workspace: chain measurements, chart + intelligence rail -------- */}
       <Shell>
         <div className="band-dense">
-          {/* What is being observed, layer by layer. The one live layer carries
-              a real block number; the rest carry a dash and their own sentence,
-              so the reader learns the shape of the product from its empty state
-              rather than reading a column of the same word. */}
-          <section aria-label="Observation layers" className="mb-8 border border-rule">
+          {/* Three of these four cells are read over RPC on this render. They are
+              the reason the product feels alive with nothing stored: a head, a
+              cadence and a round trip are facts, measured now. */}
+          <section aria-label="Live chain measurements" className="mb-8 border border-rule">
             <header className="flex items-center justify-between gap-3 border-b border-rule px-4 py-2.5">
-              <h2 className="label text-ink">OBSERVATION LAYERS</h2>
+              <h2 className="label text-ink">LIVE CHAIN MEASUREMENTS</h2>
               <Link href="/docs/status" className="label-s text-ink-faint m-fast hover:text-ink">
                 PIPELINE STATUS →
               </Link>
             </header>
             <div className="grid grid-cols-1 gap-px bg-rule sm:grid-cols-2 xl:grid-cols-4">
-              <Layer
-                title="CHAIN LINK"
-                state={link.state}
-                surface="network"
-                tone="signal"
-                value={linkLive ? blockLabel(link.value) : null}
-                foot={
-                  linkLive
-                    ? `${link.provenance.source} · READ ${relativeTime(link.observedAt, now)}`
-                    : undefined
-                }
-              />
-              <Layer
-                title="ASSET REGISTRY"
-                state={assetCount.state}
-                surface="registry"
-                value={hasValue(assetCount) ? `${integer(assetCount.value)} INDEXED` : null}
-              />
-              <Layer
-                title="CAPITAL FLOW"
-                state={activity.state}
-                surface="flow"
-                value={windowMeasured ? `${integer(activity.transfers)} TRANSFERS` : null}
-              />
-              <Layer
-                title="MARKET STRUCTURE"
-                state={activity.state}
-                surface="topology"
-                value={windowMeasured ? `${integer(graph.shown.nodes)} NODES` : null}
-              />
+              {linkLive ? (
+                <Metric
+                  title="CHAIN HEAD"
+                  value={blockLabel(link.value)}
+                  tone="signal"
+                  foot={`${link.provenance.source} · READ ${relativeTime(link.observedAt, now)}`}
+                />
+              ) : (
+                <CapabilityCell title="CHAIN LINK" status="FAILOVER READY" foot={link.provenance.source} />
+              )}
+
+              {cadence ? (
+                <Metric
+                  title="BLOCK CADENCE"
+                  value={cadenceLabel(cadence.secondsPerBlock)}
+                  foot={`MEASURED ACROSS ${integer(cadence.span)} BLOCK HEADERS`}
+                />
+              ) : (
+                <CapabilityCell title="BLOCK CADENCE" status="HEADER READER ACTIVE" />
+              )}
+
+              {latencyMs === null ? (
+                <CapabilityCell title="RPC LINK" status="FAILOVER READY" foot={rpcHost} />
+              ) : (
+                <Metric title="RPC LINK" value={`${integer(latencyMs)} MS`} foot={`${rpcHost} · ROUND TRIP`} />
+              )}
+
+              {hasValue(assetCount) ? (
+                <Metric title="ASSET REGISTRY" value={`${integer(assetCount.value)} INDEXED`} />
+              ) : (
+                <CapabilityCell
+                  title={CAPABILITIES.registry.label}
+                  status={CAPABILITIES.registry.status}
+                  foot="AN ASSET APPEARS ON ITS FIRST OBSERVED TRANSFER"
+                />
+              )}
             </div>
           </section>
 
-          {/* The identity row keeps its shape whether or not an asset resolved:
-              same grid, same four measurements, dashes where the observations
-              are not there yet. */}
-          <div className="mb-4 flex flex-wrap items-end justify-between gap-4 border-b border-rule pb-4">
-            <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1">
-              {selected ? (
-                <>
-                  <h2 className="font-display text-[1.75rem] leading-none tracking-[-0.02em] text-ink">
-                    {selected.symbol}
-                  </h2>
-                  <span className="label-s">{ASSET_TYPE_LABEL[selected.asset_type] ?? selected.asset_type}</span>
-                  <span className="truncate text-body-s text-ink-muted">{selected.name}</span>
-                  {selected.verified ? <StateTag state="OK" label="VERIFIED CONTRACT" /> : null}
-                </>
-              ) : (
-                <>
-                  <h2 className="font-display text-[1.75rem] leading-none tracking-[-0.02em] text-ink">
-                    {registry.headline}
-                  </h2>
-                  <StateTag state={assetsResult.state} surface="registry" />
-                  <span className="max-w-[46ch] text-body-s text-ink-muted">{registry.detail}</span>
-                </>
-              )}
+          {/* The identity row belongs to an asset. With none resolved there is
+              nothing to identify, so it is not drawn — a row of four dashes under
+              a heading is worse than no row at all. */}
+          {selected ? (
+            <div className="mb-4 flex flex-wrap items-end justify-between gap-4 border-b border-rule pb-4">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1">
+                <h2 className="font-display text-[1.75rem] leading-none tracking-[-0.02em] text-ink">
+                  {selected.symbol}
+                </h2>
+                <span className="label-s">{ASSET_TYPE_LABEL[selected.asset_type] ?? selected.asset_type}</span>
+                <span className="truncate text-body-s text-ink-muted">{selected.name}</span>
+                {selected.verified ? <StateTag state="OK" label="VERIFIED CONTRACT" /> : null}
+              </div>
+              <dl className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
+                <Stat
+                  label="PRICE"
+                  value={selectedPrice ? compact(selectedPrice.price, 4) : null}
+                  state={priceState}
+                  surface="price"
+                />
+                <Stat
+                  label={`${window} TRANSFERS`}
+                  value={selectedActivity ? integer(selectedActivity.transfers) : null}
+                  state={activity.state}
+                  surface="activity"
+                />
+                <Stat
+                  label={`${window} GROSS VOLUME`}
+                  value={selectedActivity ? compact(selectedActivity.volume) : null}
+                  state={activity.state}
+                  surface="flow"
+                />
+                <Stat
+                  label="COUNTERPARTIES"
+                  value={selectedActivity ? integer(selectedActivity.counterparties) : null}
+                  state={activity.state}
+                  surface="activity"
+                />
+              </dl>
             </div>
-            <dl className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
-              <Stat
-                label="PRICE"
-                value={selectedPrice ? compact(selectedPrice.price, 4) : null}
-                state={priceState}
-                surface="price"
-              />
-              <Stat
-                label={`${window} TRANSFERS`}
-                value={selectedActivity ? integer(selectedActivity.transfers) : null}
-                state={activity.state}
-                surface="activity"
-              />
-              <Stat
-                label={`${window} GROSS VOLUME`}
-                value={selectedActivity ? compact(selectedActivity.volume) : null}
-                state={activity.state}
-                surface="flow"
-              />
-              <Stat
-                label="COUNTERPARTIES"
-                value={selectedActivity ? integer(selectedActivity.counterparties) : null}
-                state={activity.state}
-                surface="activity"
-              />
-            </dl>
-          </div>
+          ) : null}
 
           {ranked.length > 1 ? (
             <div className="mb-4">
@@ -338,19 +367,34 @@ export default async function DashboardPage({
             gap="gap-6"
             align="stretch"
             left={
+              /* A real, interactive chart on first paint, with or without a
+                 database. With an asset resolved the panel offers both markets
+                 and opens on whichever has a series; with none, the reference
+                 market stands alone and says so in its own header. */
               selected ? (
-                <MarketChart contract={selected.contract_address} symbol={selected.symbol} height={420} />
+                <MarketChartPanel
+                  contract={selected.contract_address}
+                  symbol={selected.symbol}
+                  height={460}
+                  hasOnchainSeries={Boolean(selectedPrice)}
+                />
               ) : (
-                <PendingPlane state={priceState} minHeight={420} />
+                <section aria-label="Reference market chart" className="border border-rule bg-surface">
+                  <ReferenceChart height={460} />
+                </section>
               )
             }
             right={
-              <RailColumn revision={`${window}:${selected?.contract_address ?? "none"}`}>
-                <CapitalFlowModule window={window} activity={activity} edges={edges} assets={assets} />
-                <NetworkActivityModule window={window} activity={activity} />
-                <TopFlowsModule edges={edges} assets={assets} window={window} state={activity.state} />
-                <StructureChangeModule change={structure} window={window} />
-              </RailColumn>
+              railLive ? (
+                <RailColumn revision={`${window}:${selected?.contract_address ?? "none"}`}>
+                  <CapitalFlowModule window={window} activity={activity} edges={edges} assets={assets} />
+                  <NetworkActivityModule window={window} activity={activity} />
+                  <TopFlowsModule edges={edges} assets={assets} window={window} state={activity.state} />
+                  <StructureChangeModule change={structure} window={window} />
+                </RailColumn>
+              ) : (
+                <CapabilityRail />
+              )
             }
           />
         </div>
@@ -369,19 +413,16 @@ export default async function DashboardPage({
                 </>
               ) : (
                 <>
-                  Market topology over {window} — a node for every address and asset observed moving value, an edge for
-                  every transfer between two of them.
+                  Market topology — a node for every address and asset observed moving value, an edge for every transfer
+                  between two of them.
                 </>
               )
             }
             provenance="ROBINHOOD CHAIN RPC · ERC-20 TRANSFER LOGS INDEXED BY FOLDMARK"
             aside={
-              <span className="flex items-center gap-3">
-                {drawn ? null : <StateTag state={activity.state} surface="topology" />}
-                <Link href="/fabric" className="label text-ink-muted m-fast hover:text-ink">
-                  FULL TOPOLOGY →
-                </Link>
-              </span>
+              <Link href="/fabric" className="label text-ink-muted m-fast hover:text-ink">
+                FULL TOPOLOGY →
+              </Link>
             }
           >
             <div className="flex h-[26rem] min-h-0">
@@ -398,16 +439,16 @@ export default async function DashboardPage({
       </Shell>
 
       {/* ---- events -------------------------------------------------------- */}
-      <Shell>
-        <div className="band-dense">
-          <Split
-            ratio="7:5"
-            gap="gap-6"
-            left={<EventLedger rows={recent.rows} assets={assets} state={recent.state} now={now} />}
-            right={
-              <Panel>
-                <PanelHeader title="ACTIVE ASSETS" meta={window} state={assetsResult.state} surface="registry" />
-                {ranked.length ? (
+      {showEvents ? (
+        <Shell>
+          <div className="band-dense">
+            <Split
+              ratio="7:5"
+              gap="gap-6"
+              left={<EventLedger rows={recent.rows} assets={assets} state={recent.state} now={now} />}
+              right={
+                <Panel>
+                  <PanelHeader title="ACTIVE ASSETS" meta={window} state={assetsResult.state} surface="registry" />
                   <ol>
                     {ranked.slice(0, 8).map((a) => {
                       const act = activityByAsset.get(a.id);
@@ -419,7 +460,9 @@ export default async function DashboardPage({
                           >
                             <span className="truncate font-mono text-data text-ink">
                               {a.symbol}
-                              <span className="ml-2 text-ink-faint">{ASSET_TYPE_LABEL[a.asset_type] ?? a.asset_type}</span>
+                              <span className="ml-2 text-ink-faint">
+                                {ASSET_TYPE_LABEL[a.asset_type] ?? a.asset_type}
+                              </span>
                             </span>
                             <span className="tabular font-mono text-data-s text-ink-muted">
                               {act ? `${integer(act.transfers)} TX` : "—"}
@@ -432,26 +475,103 @@ export default async function DashboardPage({
                       );
                     })}
                   </ol>
-                ) : (
-                  <EmptyState state={assetsResult.state} surface="registry" />
-                )}
-              </Panel>
-            }
-          />
-        </div>
-      </Shell>
+                </Panel>
+              }
+            />
+          </div>
+        </Shell>
+      ) : null}
     </>
   );
 }
 
+/* ------------------------------------------------------------ measurement */
+
+/** How many blocks the cadence sample spans. Recent enough for any public node. */
+const CADENCE_SPAN = 100;
+
+/**
+ * Block cadence, measured — not assumed.
+ *
+ * Two real block headers, their timestamps differenced and divided by the
+ * distance between them. It needs no database and no index, which is the whole
+ * point: it is a true statement about the chain that a storage-less deployment
+ * can still make. If either header cannot be read the function returns null and
+ * the surface simply does not claim a cadence.
+ */
+async function measureCadence(head: number | null): Promise<{ secondsPerBlock: number; span: number } | null> {
+  if (head === null || head <= CADENCE_SPAN) return null;
+  const from = head - CADENCE_SPAN;
+  try {
+    const times = await getBlockTimes([from, head]);
+    const a = times.get(from);
+    const b = times.get(head);
+    if (a === undefined || b === undefined || b <= a) return null;
+    return { secondsPerBlock: (b - a) / 1000 / CADENCE_SPAN, span: CADENCE_SPAN };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * How a measured cadence is written.
+ *
+ * Robinhood Chain produces blocks faster than once a second, and "0.11 S" makes
+ * a reader do arithmetic to learn that. Below a second the same measurement is
+ * said in milliseconds. The number is not changed, only its unit.
+ */
+function cadenceLabel(secondsPerBlock: number): string {
+  return secondsPerBlock < 1 ? `${integer(Math.round(secondsPerBlock * 1000))} MS` : `${secondsPerBlock.toFixed(2)} S`;
+}
+
+/** The endpoint that answered last, as a host. Real, and worth naming. */
+function endpointHost(): string {
+  const url = activeEndpoint();
+  try {
+    return new URL(url).host.toUpperCase();
+  } catch {
+    return url.toUpperCase();
+  }
+}
+
 /* ------------------------------------------------------------------ parts */
+
+type StatusSegment = { label: string; value: string; tone: "live" | "ready" | "off" };
+
+/**
+ * The single status area.
+ *
+ * One line, three segments, stated once for the whole page. Every panel below it
+ * is then free to say nothing about its own condition, which is what stops the
+ * dashboard reading as twenty copies of the same apology.
+ */
+function StatusRail({ segments }: { segments: StatusSegment[] }) {
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-x-6 gap-y-2 border border-rule bg-surface px-4 py-2.5">
+      {segments.map((s) => (
+        <span key={s.label} className="flex min-w-0 items-center gap-2">
+          <span
+            aria-hidden
+            className={`h-1.5 w-1.5 shrink-0 ${
+              s.tone === "live" ? "fm-tick bg-signal" : s.tone === "ready" ? "bg-ink-dim" : "bg-ink-faint"
+            }`}
+          />
+          <span className={`label ${s.tone === "live" ? "text-signal" : "text-ink"}`}>{s.label}</span>
+          <span className="label-s truncate text-ink-faint">{s.value}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 /**
  * One measurement in the identity row.
  *
  * A real value prints; anything else prints the em dash and its own sentence
  * through AbsentValue. There is deliberately no third branch: nothing here can
- * put a figure in the slot that did not come from a measurement.
+ * put a figure in the slot that did not come from a measurement. This row is
+ * only drawn beside a resolved asset, so a dash here sits next to three real
+ * figures rather than standing in a column of its own.
  */
 function Stat({
   label,
@@ -478,167 +598,117 @@ function Stat({
   );
 }
 
-/**
- * One layer of the product and its condition.
- *
- * `value` is passed only where something was genuinely measured — in practice
- * the chain head, which is read over RPC and owes nothing to storage. Every
- * other layer resolves to a dash and the sentence its surface writes.
- */
-function Layer({
+/** A measured cell. Only ever rendered with a value that was actually read. */
+function Metric({
   title,
-  state,
-  surface,
-  value = null,
-  tone = "ink",
+  value,
   foot,
+  tone = "ink",
 }: {
   title: string;
-  state: DataState;
-  surface: Surface;
-  value?: string | null;
-  /** Signal is reserved for the chain link — the one thing being read right now. */
-  tone?: "ink" | "signal";
+  value: string;
   foot?: ReactNode;
+  /** Signal is reserved for the chain link — the thing being read right now. */
+  tone?: "ink" | "signal";
 }) {
-  const p = present(state, surface);
-  const live = value !== null;
   return (
     <div className="flex min-w-0 flex-col gap-2.5 bg-void px-4 py-4">
-      <div className="flex items-center justify-between gap-3">
-        <span className="label-s truncate">{title}</span>
-        <StateTag state={state} surface={surface} />
-      </div>
-
-      {live ? (
-        <p className="flex items-baseline gap-2">
-          {tone === "signal" ? <span aria-hidden className="fm-tick h-1.5 w-1.5 shrink-0 bg-signal" /> : null}
-          <span
-            className={`tabular truncate font-mono text-data-l ${tone === "signal" ? "text-signal" : "text-ink"}`}
-          >
-            {value}
-          </span>
-        </p>
-      ) : (
-        <AbsentValue state={state} surface={surface} />
-      )}
-
-      {/* A live layer says where the value came from; a pending one says what it
-          is waiting on. Neither sentence is written here — both come from the
-          presentation layer or from real provenance. */}
-      {live ? null : <p className="text-body-s text-ink-muted">{p.detail}</p>}
+      <span className="label-s truncate">{title}</span>
+      <p className="flex items-baseline gap-2">
+        {tone === "signal" ? <span aria-hidden className="fm-tick h-1.5 w-1.5 shrink-0 bg-signal" /> : null}
+        <span className={`tabular truncate font-mono text-data-l ${tone === "signal" ? "text-signal" : "text-ink"}`}>
+          {value}
+        </span>
+      </p>
       {foot ? <p className="label-s truncate text-ink-faint">{foot}</p> : null}
     </div>
   );
 }
 
 /**
- * The chart before there is a series to draw.
+ * A cell with no measurement in it.
  *
- * It draws no axis, no gridline, no candle and no number. What it does keep is
- * the instrument's furniture — the range control, the OHLC readout, the source
- * line — with a dash in every slot, so the region reads as a chart that has not
- * received an observation rather than a rectangle where a chart failed.
- *
- * The only motion is a single scan across the plane. It runs once and stops:
- * a loop beside a market surface would be animating an absence, and continuous
- * horizontal movement is the thing most easily mistaken for a live series.
+ * It states what part of the system is running instead of what is missing. Every
+ * one of these sentences is true on a deployment with no storage at all — the
+ * listener, the folding engine and the renderer are real code that is present
+ * and running — and none contains a digit, so a capability can never be misread
+ * as a figure.
  */
-function PendingPlane({ state, minHeight = 420 }: { state: DataState; minHeight?: number }) {
-  const p = present(state, "chart");
+function CapabilityCell({ title, status, foot }: { title: string; status: string; foot?: ReactNode }) {
   return (
-    <section aria-label="Market chart" className="flex flex-col border border-rule bg-void">
-      <header className="flex items-center justify-between gap-3 border-b border-rule px-4 py-2.5">
-        <span className="label text-ink">MARKET CHART</span>
-        <StateTag state={state} surface="chart" />
-      </header>
-
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule-faint px-4 py-2">
-        <span className="label-s text-ink-dim">RANGE</span>
-        {WINDOWS.map((w) => (
-          <span key={w} className="label-s text-ink-faint">
-            {w}
-          </span>
-        ))}
-      </div>
-
-      <div
-        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-6 py-12"
-        style={{ minHeight }}
-      >
-        <div aria-hidden className="fm-plane-scan absolute inset-0" />
-        <CornerMarks />
-        <div className="relative flex max-w-[46ch] flex-col items-center gap-3 text-center">
-          <p className="m-enter-unmask font-display text-[1.375rem] leading-tight tracking-[-0.02em] text-ink sm:text-[1.625rem]">
-            {p.headline}
-          </p>
-          <p className="m-enter-fade text-body-s text-ink-muted">{p.detail}</p>
-        </div>
-      </div>
-
-      {/* The readout the chart will carry, with nothing asserted in it. */}
-      <div className="grid grid-cols-2 gap-px border-t border-rule bg-rule sm:grid-cols-5">
-        {OHLCV.map((field) => (
-          <div key={field} className="flex items-baseline justify-between gap-2 bg-void px-4 py-2.5">
-            <span className="label-s truncate">{field}</span>
-            <span aria-hidden className="shrink-0 font-mono text-data-s text-ink-dim">
-              &mdash;
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <p className="label-s border-t border-rule px-4 py-2 text-ink-faint">
-        SOURCE ROBINHOOD CHAIN RPC · NO SERIES IS DRAWN UNTIL AN OBSERVATION EXISTS
+    <div className="flex min-w-0 flex-col gap-2.5 bg-void px-4 py-4">
+      <span className="label-s truncate">{title}</span>
+      <p className="flex items-center gap-2">
+        <span aria-hidden className="h-1.5 w-1.5 shrink-0 bg-ink-dim" />
+        <span className="truncate font-mono text-label uppercase tracking-[0.16em] text-ink-muted">{status}</span>
       </p>
-    </section>
+      {foot ? <p className="label-s truncate text-ink-faint">{foot}</p> : null}
+    </div>
   );
 }
 
-/** The fields a candle carries, named — never filled. */
-const OHLCV = ["OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"] as const;
-
-/** Registration marks. A drafting frame, not a card border. */
-function CornerMarks() {
+/** A tape cell in capability mode: a label and a running system, never a dash. */
+function TapeCapability({ capability }: { capability: { label: string; status: string } }) {
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0">
-      <span className="absolute left-3 top-3 h-3 w-3 border-l border-t border-rule-strong" />
-      <span className="absolute right-3 top-3 h-3 w-3 border-r border-t border-rule-strong" />
-      <span className="absolute bottom-3 left-3 h-3 w-3 border-b border-l border-rule-strong" />
-      <span className="absolute bottom-3 right-3 h-3 w-3 border-b border-r border-rule-strong" />
+    <div className="flex min-w-[9.5rem] shrink-0 flex-col justify-center gap-1 border-r border-rule py-3 pr-6 last:border-r-0 sm:min-w-[11rem]">
+      <dt className="label-s">{capability.label}</dt>
+      <dd className="flex items-center gap-2">
+        <span aria-hidden className="h-1 w-1 shrink-0 bg-ink-dim" />
+        <span className="whitespace-nowrap font-mono text-label-s uppercase tracking-[0.16em] text-ink-muted">
+          {capability.status}
+        </span>
+      </dd>
     </div>
   );
 }
 
 /**
- * Page-local motion.
+ * The rail in capability mode.
  *
- * Two gestures only: one bounded scan across an empty plane, and a slow tick on
- * the live layer. Neither encodes a quantity, and the global reduced-motion
- * reset already collapses both to a still frame — restated here so the scan is
- * removed outright rather than flashed.
+ * What the metric rail becomes before anything has been observed. The four lines
+ * are the four engines that would fill it, each named with what it is currently
+ * doing — which is running and reading the chain, not failing.
+ */
+function CapabilityRail() {
+  const items = [CAPABILITIES.transfers, CAPABILITIES.flow, CAPABILITIES.topology, CAPABILITIES.addresses];
+  return (
+    <aside aria-label="System capabilities" className="flex flex-col border border-rule bg-surface">
+      <header className="flex items-center justify-between gap-3 border-b border-rule px-4 py-2.5">
+        <span className="label text-ink">SYSTEM</span>
+        <span className="label-s text-ink-faint">CHAIN {CHAIN.id}</span>
+      </header>
+      {items.map((c) => (
+        <div
+          key={c.label}
+          className="flex items-center justify-between gap-3 border-b border-rule-faint px-4 py-3.5 last:border-b-0"
+        >
+          <span className="label-s truncate text-ink-muted">{c.label}</span>
+          <span className="flex shrink-0 items-center gap-2">
+            <span aria-hidden className="h-1 w-1 bg-ink-dim" />
+            <span className="whitespace-nowrap font-mono text-label-s uppercase tracking-[0.16em] text-ink">
+              {c.status}
+            </span>
+          </span>
+        </div>
+      ))}
+      <p className="label-s border-t border-rule px-4 py-2.5 normal-case tracking-[0.02em] text-ink-faint">
+        Each layer is running. No figure is shown until it is measured.
+      </p>
+    </aside>
+  );
+}
+
+/**
+ * Page-local motion: one slow tick on the live layer, and nothing else.
+ *
+ * The sweeping scan that used to run across the empty chart plane is gone with
+ * the plane itself — there is a real chart in that slot now, and animating an
+ * absence was always the weaker idea. The global reduced-motion reset already
+ * collapses the tick; it is restated here so the rule travels with the page.
  */
 const DASHBOARD_CSS = `
-.fm-plane-scan {
-  background-image: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--color-signal) 10%, transparent),
-    transparent
-  );
-  background-size: 160px 100%;
-  background-repeat: no-repeat;
-  background-position: -200px 0;
-  animation: fm-plane-sweep 1800ms var(--ease-inout) 260ms both;
-}
-
 .fm-tick {
   animation: fm-tick-blink 2600ms steps(1, end) infinite;
-}
-
-@keyframes fm-plane-sweep {
-  from { background-position: -200px 0; }
-  to { background-position: calc(100% + 200px) 0; }
 }
 
 @keyframes fm-tick-blink {
@@ -647,7 +717,6 @@ const DASHBOARD_CSS = `
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fm-plane-scan { background-image: none; animation: none; }
   .fm-tick { animation: none; opacity: 1; }
 }
 `;

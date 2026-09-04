@@ -5,10 +5,11 @@ import { Panel, PanelHeader, StateTag, Methodology } from "@/components/ui/primi
 import { ChipLink, ChipGroup } from "@/components/ui/controls";
 import { Sparkline } from "@/components/charts";
 import { AssetSearch } from "@/components/forms/AssetSearch";
-import { getAssets, getWindowActivity, getLatestPrices, foldByAsset, requestNow,
+import { getAssets, getWindowActivity, getLatestPrices, getChainHead, foldByAsset, requestNow,
 } from "@/lib/queries";
-import { presentLabel } from "@/lib/presentation-state";
-import { compact, integer, relativeTime, shortAddress } from "@/lib/format";
+import { present } from "@/lib/presentation-state";
+import { hasValue, type DataState, type Measured } from "@/lib/data-state";
+import { blockLabel, compact, integer, relativeTime, shortAddress } from "@/lib/format";
 import { ASSET_TYPE_LABEL, ASSET_TYPES, WINDOWS, CHAIN, type AssetType, type FlowWindow } from "@/config/site";
 
 export const metadata: Metadata = {
@@ -38,6 +39,31 @@ const COLUMNS: LedgerColumn[] = [
   { key: "contract", label: "CONTRACT", width: "minmax(120px, 0.9fr)", align: "right", hideBelow: "lg" },
 ];
 
+/**
+ * What a row in this registry carries once a contract has been observed.
+ *
+ * An empty registry used to be an 820-pixel table with a single sentence
+ * floating in it, which reads as a page that failed rather than a page nothing
+ * has been given to list yet. This is the alternative: the same search, the
+ * same filters, the same headers, and beneath them a description of the five
+ * things the registry captures per asset. It is non-numeric by construction —
+ * no symbol, no contract, no figure — because a placeholder row would be an
+ * invented asset however it were styled, and this product does not invent rows.
+ */
+const CAPTURES: ReadonlyArray<readonly [string, string]> = [
+  [
+    "PRICE",
+    "The canonical quote for a contract, reconciled across every venue observed quoting it, with the disagreeing quotes kept beside it.",
+  ],
+  ["FLOW", "Transfers folded into direction, size and counterparty across the window selected above."],
+  ["LIQUIDITY", "Depth behind the venue that produced a quote, read from the pool itself rather than inferred."],
+  [
+    "RELATIONSHIPS",
+    "Which addresses move an asset, and which addresses they move it with — the edges of the asset graph.",
+  ],
+  ["MARKETS", "Every venue observed quoting the contract, and how far apart those venues are."],
+];
+
 export default async function AssetsPage({
   searchParams,
 }: {
@@ -52,7 +78,14 @@ export default async function AssetsPage({
   const window: FlowWindow = (WINDOWS as readonly string[]).includes(params.w ?? "") ? (params.w as FlowWindow) : "24H";
 
   const now = await requestNow();
-  const [assetsResult, activity] = await Promise.all([getAssets(), getWindowActivity(window, now)]);
+  // The chain head is read over RPC and owes nothing to the database. It stays
+  // true when every other figure on this page is still waiting, which is the
+  // difference between a product that is listening and one that is broken.
+  const [assetsResult, activity, chainHead] = await Promise.all([
+    getAssets(),
+    getWindowActivity(window, now),
+    getChainHead(),
+  ]);
   const all = assetsResult.rows;
   const byAsset = foldByAsset(activity.rows, all, window, now);
   const prices = await getLatestPrices(all.map((a) => a.id));
@@ -93,11 +126,14 @@ export default async function AssetsPage({
    * What an activity cell says when it has nothing in it.
    *
    * NONE is a measurement: the window was queried and held no transfer. Until
-   * the index reaches this window there is no measurement to report, so the
-   * cell says what is being waited on instead of asserting a zero.
+   * the index reaches this window there is no measurement to report — and that
+   * is said once, above the table, instead of being stamped into three cells of
+   * every row. The cell holds an em dash, which has exactly one meaning on this
+   * surface and never means zero.
    */
   const activityPending = activity.state === "INDEXING" || activity.state === "UNAVAILABLE";
-  const absentActivity = activityPending ? presentLabel(activity.state, "activity") : "NONE";
+  const absentActivity = activityPending ? "—" : "NONE";
+  const showActivityMode = rows.length > 0 && activityPending;
 
   const href = (next: Partial<{ q: string; type: string; sort: string; w: string }>) => {
     const sp = new URLSearchParams();
@@ -183,6 +219,18 @@ export default async function AssetsPage({
           </div>
         </div>
 
+        {/* The one place the table says its activity columns are still waiting. */}
+        {showActivityMode ? (
+          <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 border border-rule bg-surface px-4 py-2.5">
+            <StateTag state={activity.state} surface="activity" />
+            <p className="min-w-0 max-w-[74ch] text-body-s text-ink-muted">
+              Activity over {window} has not been measured yet, so TRANSFERS, GROSS VOLUME and COUNTERPARTIES hold an em
+              dash. A dash is a value that was not observed — it is never a zero.
+            </p>
+            <ChainHeadLine head={chainHead} now={now} />
+          </div>
+        ) : null}
+
         <div className="mt-6">
           <Ledger columns={COLUMNS} caption={`Assets indexed on ${CHAIN.name}, activity measured over ${window}`} minWidth={820}>
             {rows.length ? (
@@ -229,20 +277,30 @@ export default async function AssetsPage({
                   </LedgerRow>
                 );
               })
-            ) : (
+            ) : all.length ? (
+              /* A filtered-out table is a measured result and says so. */
               <LedgerEmpty
-                state={all.length ? "EMPTY" : assetsResult.state}
+                state="EMPTY"
                 surface="registry"
-                /* A filtered-out table is a measured result and says so. An
-                   unfilled registry is not, so the surface writes that line. */
-                title={all.length ? "No asset matches this filter" : undefined}
-                detail={all.length ? "Clear the search or widen the type filter." : undefined}
+                title="No asset matches this filter"
+                detail="Clear the search or widen the type filter."
               />
+            ) : (
+              /* An unfilled registry is not a measured result, and it gets a
+                 designed body rather than one sentence in an empty table. */
+              <RegistryEmpty state={assetsResult.state} head={chainHead} now={now} />
             )}
           </Ledger>
         </div>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        {/*
+          items-start. WHAT THIS TABLE MEASURES is a header and a closed
+          methodology drawer; NOT YET OBSERVED is five rows and a footnote. A
+          stretching grid made the first panel as tall as the second and filled
+          the difference with its own surface tone — a couple of hundred pixels
+          of empty panel that says nothing. A panel ends where its content does.
+        */}
+        <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
           <Panel>
             <PanelHeader title="WHAT THIS TABLE MEASURES" />
             <Methodology label="COLUMN DEFINITIONS">
@@ -262,6 +320,10 @@ export default async function AssetsPage({
                 <li>
                   <strong className="text-ink">COUNTERPARTIES</strong> — distinct addresses appearing as sender or
                   recipient in the window. This is not a holder count.
+                </li>
+                <li>
+                  An em dash is a value that was not observed. NONE is a measurement — the window was queried and held
+                  nothing. The two are never interchanged.
                 </li>
               </ul>
             </Methodology>
@@ -290,6 +352,67 @@ export default async function AssetsPage({
         </div>
       </div>
     </Shell>
+  );
+}
+
+/**
+ * The registry with no rows in it.
+ *
+ * The table keeps its search, filters, sort and headers — a reader can still
+ * see exactly what this surface is and operate every control on it — and the
+ * body says what the registry captures per asset instead of leaving a wide
+ * empty rectangle. Nothing here is an asset: no symbol, no contract address,
+ * no figure. The chain head at the foot is a real reading taken over RPC on
+ * this request.
+ */
+function RegistryEmpty({ state, head, now }: { state: DataState; head: Measured<number>; now: number }) {
+  const p = present(state, "registry");
+  return (
+    <div className="border-b border-rule-faint last:border-b-0">
+      <div className="flex flex-col items-start gap-3 px-4 py-9 sm:px-6">
+        <StateTag state={state} surface="registry" />
+        <p className="font-display text-[1.5rem] leading-tight tracking-[-0.02em] text-ink">{p.headline}</p>
+        <p className="measure text-body-s text-ink-muted">{p.detail}</p>
+      </div>
+
+      <p className="label-s border-t border-rule px-4 pt-3 text-ink-dim sm:px-6">
+        WHAT A ROW CARRIES ONCE A CONTRACT IS OBSERVED
+      </p>
+      <ul className="mt-2 flex flex-col">
+        {CAPTURES.map(([k, v]) => (
+          <li
+            key={k}
+            className="grid grid-cols-1 gap-x-6 gap-y-1 border-b border-rule-faint px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(10rem,1fr)_minmax(0,3fr)] sm:px-6"
+          >
+            <span className="label-s text-ink-muted">{k}</span>
+            <span className="text-body-s text-ink-faint">{v}</span>
+          </li>
+        ))}
+      </ul>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-rule px-4 py-2 sm:px-6">
+        <p className="label-s text-ink-faint">
+          SOURCE ROBINHOOD CHAIN RPC · NO ASSET IS LISTED UNTIL A TRANSFER IS OBSERVED
+        </p>
+        <ChainHeadLine head={head} now={now} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The chain head, or nothing at all.
+ *
+ * Printed only when it was actually read. A dash here would say the RPC
+ * answered with an unknown block, which is a different and untrue statement
+ * from having no reading to show.
+ */
+function ChainHeadLine({ head, now }: { head: Measured<number>; now: number }) {
+  if (!hasValue(head)) return null;
+  return (
+    <p className="label-s ml-auto shrink-0 text-ink-faint">
+      CHAIN HEAD {blockLabel(head.value)} · {relativeTime(head.observedAt, now)}
+    </p>
   );
 }
 

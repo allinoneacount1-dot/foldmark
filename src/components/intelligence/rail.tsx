@@ -5,6 +5,8 @@ import { compact, integer, shortAddress, signed } from "@/lib/format";
 import type { DataState } from "@/lib/data-state";
 import type { AssetRow, FlowEdge, StructureChange, WindowActivity } from "@/lib/queries";
 import type { FlowWindow } from "@/config/site";
+import { CHAIN } from "@/config/site";
+import { CAPABILITIES } from "@/lib/presentation-preview";
 
 /**
  * The intelligence rail.
@@ -186,7 +188,10 @@ export function TopFlowsModule({
 
   return (
     <Panel>
-      <PanelHeader title="TOP FLOWS" meta={window} state={shown} surface="topology" />
+      {/* A flows panel says flow things. Borrowing the topology surface made it
+          announce STRUCTURE INITIALIZING beside a canvas already drawing that
+          structure — the chip contradicting the picture next to it. */}
+      <PanelHeader title="TOP FLOWS" meta={window} state={shown} surface="flow" />
       {edges.length ? (
         <div className="px-4 py-2">
           {edges.slice(0, 6).map((e) => (
@@ -203,7 +208,8 @@ export function TopFlowsModule({
       ) : (
         <EmptyState
           state={shown}
-          surface="topology"
+          surface="flow"
+          title="No directed edge observed"
           detail="Directed value edges appear here once the indexer records transfers between addresses."
         />
       )}
@@ -331,5 +337,44 @@ export function RailLink({ href, label }: { href: string; label: string }) {
       {label}
       <span aria-hidden>→</span>
     </Link>
+  );
+}
+
+/**
+ * What the rail says when nothing has been measured.
+ *
+ * The alternative was three stacked panels each announcing that it is waiting,
+ * which reads as three separate failures rather than one system that has not
+ * been given a database yet. These four lines are true right now: the chain
+ * listener, the folding engine, the topology renderer and the address index all
+ * exist and run. None of them is a figure, so none of them can be mistaken for
+ * one.
+ */
+export function CapabilityRail({ className = "" }: { className?: string }) {
+  const items = [CAPABILITIES.transfers, CAPABILITIES.flow, CAPABILITIES.topology, CAPABILITIES.addresses];
+  return (
+    <aside aria-label="System capabilities" className={`flex flex-col border border-rule bg-surface ${className}`}>
+      <header className="flex items-center justify-between gap-3 border-b border-rule px-4 py-2.5">
+        <span className="label text-ink">SYSTEM</span>
+        <span className="label-s text-ink-faint">CHAIN {CHAIN.id}</span>
+      </header>
+      {items.map((c) => (
+        <div
+          key={c.label}
+          className="flex items-center justify-between gap-3 border-b border-rule-faint px-4 py-3.5 last:border-b-0"
+        >
+          <span className="label-s truncate text-ink-muted">{c.label}</span>
+          <span className="flex shrink-0 items-center gap-2">
+            <span aria-hidden className="h-1 w-1 bg-ink-dim" />
+            <span className="whitespace-nowrap font-mono text-label-s uppercase tracking-[0.16em] text-ink">
+              {c.status}
+            </span>
+          </span>
+        </div>
+      ))}
+      <p className="label-s border-t border-rule px-4 py-2.5 normal-case tracking-[0.02em] text-ink-faint">
+        Each layer is running. No figure is shown until it is measured.
+      </p>
+    </aside>
   );
 }
