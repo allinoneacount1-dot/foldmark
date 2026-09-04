@@ -43,6 +43,8 @@ import { DexMarkets } from "@/components/market/DexMarkets";
 import { restAssetMarket } from "@/server/db/rest-queries";
 import { ObservedOwnership } from "@/components/market/ObservedOwnership";
 import { observedOwnership } from "@/server/ownership/balances";
+import { PriceHistoryPanel } from "@/components/market/PriceHistoryPanel";
+import { priceHistory, assetNotional } from "@/server/market/historical";
 import { blockLabel, compact, integer, isAddress, relativeTime, shortAddress } from "@/lib/format";
 import { ASSET_TYPE_LABEL, CHAIN, WINDOWS, type FlowWindow } from "@/config/site";
 
@@ -100,6 +102,14 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
    * and does not reach this asset's first transfer, so the panel says so.
    */
   const ownership = asset ? await observedOwnership(asset.id) : null;
+  /**
+   * Real observed prices, and what share of transfers they can actually value.
+   * Alignment is the canonical no-look-ahead rule; coverage travels with the
+   * total so a partial figure is never read as a complete one.
+   */
+  const [history, notionalCoverage] = asset
+    ? await Promise.all([priceHistory(asset.id), assetNotional(asset.id, asset.decimals)])
+    : [null, null];
   const now = await requestNow();
 
   const [indexer, activity24h] = await Promise.all([getIndexerStatus(), getWindowActivity("24H", now)]);
@@ -471,6 +481,10 @@ export default async function AssetPassport({ params }: { params: Promise<{ cont
             right={
               <div className="flex flex-col gap-6">
                 {dexMarket ? <DexMarkets market={dexMarket} /> : null}
+
+                {history ? (
+                  <PriceHistoryPanel history={history} coverage={notionalCoverage} symbol={asset.symbol} />
+                ) : null}
 
                 {ownership ? (
                   <ObservedOwnership ownership={ownership} decimals={asset.decimals} symbol={asset.symbol} />
